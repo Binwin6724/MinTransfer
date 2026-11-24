@@ -165,3 +165,22 @@ export function backupFolderName(deviceName: string, when: Date): string {
   const stamp = `${when.getFullYear()}-${p(when.getMonth() + 1)}-${p(when.getDate())} ${p(when.getHours())}${p(when.getMinutes())}${p(when.getSeconds())}`;
   return `${safeName(deviceName, 'Phone')} ${stamp}`;
 }
+
+/** Space kept free on top of what a copy needs, so the computer itself doesn't run out. */
+export const SPACE_MARGIN = 1024 ** 3;
+
+/**
+ * Message when `free` bytes can't hold `need` bytes (plus a 1 GB margin), else null.
+ * `free` is null when the drive's free space is unknown.
+ */
+export function spaceProblem(free: number | null | undefined, need: number, where = 'this computer'): string | null {
+  if (free == null || need <= 0 || free >= need + SPACE_MARGIN) return null;
+  return `Not enough space on ${where}: this needs about ${formatBytes(need)} but only ${formatBytes(free)} is free. Free up space or choose another folder on a bigger drive.`;
+}
+
+/** Turns "ENOSPC: no space left on device" into something a person understands. */
+export function explainDiskError(message: string): string {
+  return /ENOSPC|no space left|disk full|not enough space/i.test(message) && !/^Not enough space on/.test(message)
+    ? 'The computer’s drive is full, so the copy stopped. Free up space (or choose a folder on another drive) and try again. Files already copied are kept.'
+    : message;
+}

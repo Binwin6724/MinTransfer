@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { CancelledError } from './exec';
 import { log } from './logger';
+import { explainDiskError } from '../shared/export';
 import type { Job, JobKind } from '../shared/types';
 
 const MAX_LOG = 400;
@@ -77,7 +78,7 @@ export class JobRunner {
           job.detail = 'Cancelled';
         } else {
           job.status = 'failed';
-          job.error = err instanceof Error ? err.message : String(err);
+          job.error = explainDiskError(err instanceof Error ? err.message : String(err));
           job.detail = job.error;
           log.error('job failed', { kind, title, error: job.error });
         }

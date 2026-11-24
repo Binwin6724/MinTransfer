@@ -8,10 +8,11 @@ import { IosService } from './ios';
 import { JobContext, JobRunner } from './jobs';
 import { Library } from './library';
 import { ExportView, PhoneManager } from './manager';
+import { PreviewCache, registerPreviewScheme } from './preview';
 import { log } from './logger';
 import { JsonStore } from './store';
 import { APPLE_DEVICES_STORE, PLATFORM_TOOLS_TERMS, Tools } from './tools';
-import { backupFolderName, formatBytes } from '../shared/export';
+import { backupFolderName, formatBytes, SPACE_MARGIN } from '../shared/export';
 import type { MediaView, RemoteFile } from '../shared/transfer';
 import type { AppSettings, AppState, JobKind, BackupRequest, EraseRequest, ExtractRequest, PhoneDevice, RestoreRequest, TransferRequest, TrashItem } from '../shared/types';
 
@@ -58,6 +59,10 @@ let ios: IosService;
 let jobs: JobRunner;
 let library: Library;
 let manager: PhoneManager;
+let previews: PreviewCache;
+let previewAbort: AbortController | null = null;
+
+registerPreviewScheme();
 let devices: PhoneDevice[] = [];
 let pollTimer: NodeJS.Timeout | null = null;
 let polling = false;
@@ -87,6 +92,7 @@ function state(): AppState {
     devices,
     tools: tools.status,
     iosFiles: ios.helperAvailable,
+    space: { backup: freeSpace(settings().backupDir), transfer: freeSpace(settings().transferDir) },
     backups: library.backups,
     jobs: jobs.jobs,
     settings: settings(),
@@ -234,8 +240,11 @@ function registerIpc() {
     const dir = path.join(settings().backupDir, backupFolderName(d.name, when));
     const free = freeSpace(settings().backupDir);
     const used = d.storageTotal && d.storageFree != null ? d.storageTotal - d.storageFree : null;
+    // A backup is usually smaller than what the phone uses (system files aren't copied), so only
+    // refuse when there's clearly no room, and warn otherwise.
+    if (free != null && free < SPACE_MARGIN * 2) throw new Error(`The backup drive is almost full (${formatBytes(free)} free). Free up space or choose another backup folder.`);
     const job = jobs.start('backup', `Back up ${d.name}`, d.id, async (ctx) => {
-      if (free != null && used != null && free < used * 0.25) ctx.log(`⚠ Only ${formatBytes(free)} free on the backup drive; the phone uses ${formatBytes(used)}.`);
+      if (free != null && used != null && free < used + SPACE_MARGIN) ctx.log(`⚠ Only ${formatBytes(free)} free on the backup drive; the phone uses ${formatBytes(used)}. The backup stops if the drive fills up.`);
       if (d.platform === 'ios') await ios.backup(ctx, d, dir, { encryptPassword: req.encryptPassword, label: req.label });
       else {
         if (!req.categories.length) throw new Error('Choose at least one thing to back up.');
@@ -379,7 +388,32 @@ function registerIpc() {
   });
   handle('manage:delete', (deviceId: string, paths: string[]) => {
     if (!Array.isArray(paths) || !paths.length) throw new Error('Nothing selected.');
-    return manager.remove(device(deviceId), paths);
+    const d = device(deviceId);
+    const n = paths.length;
+    return jobs.start('transfer', `Delete ${n.toLocaleString()} ${n === 1 ? 'item' : 'items'} from ${d.name}`, d.id, (ctx) => manager.remove(d, paths, ctx)).id;
+  });
+  handle('manage:preview', async (deviceId: string, file: RemoteFile) => {
+    // Only one preview downloads at a time; opening another cancels the previous one.
+    previewAbort?.abort();
+    const ctrl = new AbortController();
+    previewAbort = ctrl;
+    if (captureDir && DEMO_DEVICES.some((x) => x.id === deviceId)) {
+      // Screenshot mode: show the app icon as the sample photo.
+      return previews.get(deviceId, { ...file, size: fs.statSync(path.join(app.getAppPath(), 'build', 'icon.png')).size, path: '/demo.png' }, async (_ctx, item) => fs.copyFileSync(path.join(app.getAppPath(), 'build', 'icon.png'), item.local), ctrl.signal);
+    }
+    const d = device(deviceId);
+    return previews.get(d.id, file, (ctx, item) => manager.copyOne(ctx, d, item), ctrl.signal);
+  });
+  handle('manage:cancelPreview', () => previewAbort?.abort());
+  handle('manage:openPreview', async (localPath: string) => {
+    if (!previews.owns(localPath)) throw new Error('That preview is no longer available.');
+    const err = await shell.openPath(localPath);
+    if (err) throw new Error(err);
+  });
+  handle('app:openImageCapture', async () => {
+    if (process.platform !== 'darwin') throw new Error('Image Capture is a Mac app.');
+    const err = await shell.openPath('/System/Applications/Image Capture.app');
+    if (err) throw new Error(err);
   });
   handle('manage:apps', (deviceId: string) => {
     if (captureDir && DEMO_DEVICES.some((x) => x.id === deviceId))
@@ -455,6 +489,7 @@ async function captureScreenshots(dir: string) {
     ['/', 'devices', 'dark'],
     ['/transfer', 'transfer', 'dark'],
     ['/transfer#photos', 'transfer-photos', 'dark'],
+    ['/transfer#photos-preview', 'transfer-preview', 'dark'],
     ['/backup', 'backup', 'dark'],
     ['/restore', 'restore', 'dark'],
     ['/recover', 'recover', 'dark'],
@@ -487,6 +522,8 @@ app.whenReady().then(async () => {
   android = new AndroidService(() => tools.paths.adb);
   ios = new IosService(() => tools.paths.ios);
   manager = new PhoneManager(android, ios, () => settings().transferDir);
+  previews = new PreviewCache(path.join(app.getPath('temp'), 'MinTransfer previews'));
+  previews.install();
   jobs = new JobRunner(() => push());
   library = new Library(() => settings().backupDir, () => settings().showSystemBackups);
   registerIpc();
@@ -501,5 +538,6 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   jobs?.cancelAll();
+  previews?.clear();
   store?.flush();
 });

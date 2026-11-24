@@ -226,3 +226,31 @@ export function EmptyState({ icon, title, children, action }: { icon: string; ti
     </div>
   );
 }
+
+/**
+ * Warns before a copy when the destination drive looks too small. `need` is what the copy will
+ * take (or an estimate); `estimate` softens the wording when the real size may be smaller.
+ */
+export function SpaceWarning({ free, need, estimate, what }: { free: number | null; need: number | null | undefined; estimate?: boolean; what: string }) {
+  if (free == null) return null;
+  const MARGIN = 1024 ** 3;
+  if (free < 2 * MARGIN)
+    return (
+      <Banner kind="error">
+        <b>This computer is almost out of space</b> ({formatBytes(free)} free). Free up space or choose a folder on another drive before {what}.
+      </Banner>
+    );
+  if (!need || free >= need + MARGIN) return null;
+  return (
+    <Banner kind="warn">
+      <b>This computer may not have enough space.</b> {what[0].toUpperCase() + what.slice(1)} {estimate ? 'could need up to' : 'needs'} about {formatBytes(need)}, but only{' '}
+      {formatBytes(free)} is free here.{estimate ? ' It is often smaller, but it stops if the drive fills up.' : ''} Free up space or choose a folder on a bigger drive.
+    </Banner>
+  );
+}
+
+/** "123 GB free" under a destination folder. */
+export function FreeSpace({ free }: { free: number | null }) {
+  if (free == null) return null;
+  return <span className={free < 2 * 1024 ** 3 ? 'error-text' : 'muted'}>{formatBytes(free)} free on this drive</span>;
+}

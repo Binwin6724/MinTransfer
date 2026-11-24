@@ -1,9 +1,10 @@
 // Transfer: a phone manager. Browse and copy photos, videos, music, information (contacts,
 // messages, calls), apps and any file between a phone and this computer.
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { PageProps } from '../App';
 import { api, run } from '../api';
-import { Banner, Card, Check, DeviceNotReady, DevicePicker, EmptyState, JobCard, PageHeader, StorageBar, latestJob, pickDevice } from '../components/Common';
+import { Banner, Card, Check, DeviceNotReady, DevicePicker, EmptyState, FreeSpace, JobCard, PageHeader, SpaceWarning, StorageBar, latestJob, pickDevice } from '../components/Common';
 import { groupIcon, Icon } from '../components/Icon';
 import { formatBytes } from '../../shared/export';
 import { transferItemsFor, type MediaView, type PhoneApp, type RemoteFile } from '../../shared/transfer';
@@ -165,8 +166,9 @@ function Home({ state, device, go }: { state: AppState; device: PhoneDevice; go:
           </p>
         )}
         <DestinationRow state={state} />
+        <SpaceWarning free={state.space.transfer} need={slow ? phoneUsed(device) : null} estimate what="reading the iPhone for contacts and messages" />
         <div className="cta-row">
-          <button className="btn primary large" disabled={busy || !chosen.length} onClick={() => run(api.startTransfer({ deviceId: device.id, items: chosen }), 'Transfer started')}>
+          <button className="btn primary large" disabled={busy || !chosen.length || lowSpace(state)} onClick={() => run(api.startTransfer({ deviceId: device.id, items: chosen }), 'Transfer started')}>
             <Icon name="download" size={17} /> {busy ? 'Transferring…' : 'Transfer to computer'}
           </button>
         </div>
@@ -181,6 +183,9 @@ function DestinationRow({ state }: { state: AppState }) {
       <div>
         <div className="muted small">Saved to</div>
         <div className="mono">{state.settings.transferDir}</div>
+        <div className="small">
+          <FreeSpace free={state.space.transfer} />
+        </div>
         <div className="muted small">Each phone gets its own folder. Files already copied are skipped, so the next transfer only copies what’s new.</div>
       </div>
       <button
@@ -205,6 +210,8 @@ function Media({ state, device, view }: { state: AppState; device: PhoneDevice; 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [limit, setLimit] = useState(PAGE);
   const [query, setQuery] = useState('');
+  const [viewing, setViewing] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const busy = useTransferBusy(state, device);
   const ios = device.platform === 'ios';
   const noun = view === 'photos' ? 'photos' : view === 'videos' ? 'videos' : 'songs and audio files';
@@ -217,6 +224,7 @@ function Media({ state, device, view }: { state: AppState; device: PhoneDevice; 
       .then((f) => {
         setFiles(f);
         setPicked(new Set());
+        if (f.length && sessionStorage.getItem('mt.capturePreview')) setViewing(0); // screenshot mode
       })
       .catch((e: Error) => setError(clean(e)));
   };
@@ -285,39 +293,260 @@ function Media({ state, device, view }: { state: AppState; device: PhoneDevice; 
             <span className="muted small grow">
               {picked.size ? `${selectedFiles.length.toLocaleString()} selected` : `${shown.length.toLocaleString()} ${noun}`} · {formatBytes(selBytes)}
             </span>
-            {!ios && picked.size > 0 && (
-              <button
-                className="btn small danger-outline"
-                disabled={busy}
-                onClick={async () => {
-                  if (!confirm(`Delete ${selectedFiles.length} file(s) from ${device.name}? This can’t be undone.`)) return;
-                  await run(api.deleteFiles(device.id, selectedFiles.map((f) => f.path)), 'Deleted');
-                  load();
-                }}
-              >
-                <Icon name="trash" size={14} /> Delete
+            {!ios && (
+              <button className="btn small danger-outline" disabled={busy || !shown.length} onClick={() => setDeleting(true)}>
+                <Icon name="trash" size={14} /> {picked.size ? 'Delete selected' : `Delete all ${shown.length.toLocaleString()}`}
               </button>
             )}
-            <button className="btn primary small" disabled={busy || !exportList.length} onClick={() => run(api.exportFiles(device.id, view, exportList), 'Copying to this computer')}>
+            <button
+              className="btn primary small"
+              disabled={busy || !exportList.length || tooBig(state, selBytes)}
+              onClick={() => run(api.exportFiles(device.id, view, exportList), 'Copying to this computer')}
+            >
               <Icon name="download" size={14} /> {picked.size ? 'Copy selected to computer' : 'Copy all to computer'}
             </button>
           </div>
+          <SpaceWarning free={state.space.transfer} need={selBytes} what="copying these files" />
+          {deleting && (
+            <DeletePanel
+              count={exportList.length}
+              bytes={selBytes}
+              noun={noun}
+              device={device}
+              whole={!picked.size && !album && !query}
+              onCancel={() => setDeleting(false)}
+              onCopyFirst={() => {
+                setDeleting(false);
+                run(api.exportFiles(device.id, view, exportList), 'Copying to this computer');
+              }}
+              onConfirm={() => {
+                setDeleting(false);
+                run(api.deleteFiles(device.id, exportList.map((f) => f.path)), 'Deleting…');
+              }}
+            />
+          )}
+          <p className="muted small hint">Click a name to view it.</p>
           <FileTable
             files={shown.slice(0, limit)}
             picked={picked}
             setPicked={setPicked}
             all={shown}
             columns={['name', 'album', 'date', 'size']}
+            onPreview={(f) => setViewing(shown.indexOf(f))}
           />
           {shown.length > limit && (
             <button className="btn small more" onClick={() => setLimit((l) => l + PAGE * 3)}>
               Show more ({(shown.length - limit).toLocaleString()} left)
             </button>
           )}
-          {ios && <p className="muted small">Photos and videos can be removed from an iPhone in its Photos app only. To add photos, use iCloud Photos or Finder / Apple Devices sync.</p>}
+          {ios && view !== 'music' && <IosDeleteHelp state={state} noun={noun} />}
         </>
       )}
+      {viewing != null && shown[viewing] && (
+        <PreviewModal
+          device={device}
+          files={shown}
+          index={viewing}
+          setIndex={setViewing}
+          onCopy={(f) => run(api.exportFiles(device.id, view, [f]), 'Copying to this computer')}
+        />
+      )}
     </Card>
+  );
+}
+
+/** Typed confirmation before deleting files from a phone. */
+function DeletePanel({
+  count,
+  bytes,
+  noun,
+  device,
+  whole,
+  onCancel,
+  onConfirm,
+  onCopyFirst,
+}: {
+  count: number;
+  bytes: number;
+  noun: string;
+  device: PhoneDevice;
+  whole: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onCopyFirst: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  return (
+    <div className="delete-panel">
+      <div className="delete-head">
+        <Icon name="warning" size={18} />
+        <b>
+          Delete {whole ? 'all ' : ''}
+          {count.toLocaleString()} {count === 1 ? noun.replace(/s$/, '') : noun} ({formatBytes(bytes)}) from {device.name}?
+        </b>
+      </div>
+      <p className="small">
+        They are deleted from the phone permanently, not moved to its trash, and can’t be recovered. Copy them to this computer first if you want to keep them.
+      </p>
+      <div className="delete-actions">
+        <label className="inline-label">
+          Type <b>DELETE</b> to confirm
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus spellCheck={false} />
+        </label>
+        <button className="btn" onClick={onCopyFirst}>
+          <Icon name="download" size={14} /> Copy to computer first
+        </button>
+        <button className="btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="btn danger" disabled={typed.trim().toUpperCase() !== 'DELETE'} onClick={onConfirm}>
+          <Icon name="trash" size={14} /> Delete {count.toLocaleString()}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** iPhone photos can only be deleted through Apple's Photos library; explain how. */
+function IosDeleteHelp({ state, noun }: { state: AppState; noun: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="ios-delete">
+      <button className="link" onClick={() => setOpen(!open)}>
+        {open ? 'Hide' : `How do I delete ${noun} from this iPhone?`}
+      </button>
+      {open && (
+        <div className="small">
+          <p>
+            Apple only lets the Photos library delete {noun}; removing the files directly would leave broken, blank items in Photos. Copy them to this computer first, then:
+          </p>
+          <ul>
+            {state.platform === 'darwin' && (
+              <li>
+                <b>On this Mac:</b> open <b>Image Capture</b>, choose the iPhone, select all (⌘A) and click the delete button. It removes them through Photos.{' '}
+                <button className="link" onClick={() => run(api.openImageCapture())}>
+                  Open Image Capture
+                </button>
+              </li>
+            )}
+            {state.platform === 'win32' && (
+              <li>
+                <b>On this PC:</b> in the Windows <b>Photos</b> app choose Import ▸ the iPhone, and turn on “Delete original items after import”.
+              </li>
+            )}
+            <li>
+              <b>On the iPhone:</b> Photos ▸ Library ▸ All Photos ▸ Select, then drag across the photos (or tap and hold the first one and swipe) and tap the bin. Then
+              empty Albums ▸ Recently Deleted.
+            </li>
+            <li>With iCloud Photos on, deleting removes them from iCloud and your other devices too.</li>
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Shows a phone file in the app: photos, videos and audio play here; anything else opens in its usual app. */
+function PreviewModal({
+  device,
+  files,
+  index,
+  setIndex,
+  onCopy,
+}: {
+  device: PhoneDevice;
+  files: RemoteFile[];
+  index: number;
+  setIndex: (i: number | null) => void;
+  onCopy?: (f: RemoteFile) => void;
+}) {
+  const file = files[index];
+  const [p, setP] = useState<{ url: string | null; kind: string; localPath: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setP(null);
+    setError(null);
+    api
+      .preview(device.id, file)
+      .then((r) => live && setP(r))
+      .catch((e: Error) => live && setError(clean(e)));
+    return () => {
+      live = false;
+    };
+  }, [file.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowLeft' && index > 0) setIndex(index - 1);
+      else if (e.key === 'ArrowRight' && index < files.length - 1) setIndex(index + 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+  const close = () => {
+    api.cancelPreview().catch(() => {});
+    setIndex(null);
+  };
+  // Rendered into <body>: cards use backdrop-filter, which would trap a fixed overlay inside them.
+  return createPortal(
+    <div className="modal-backdrop" onClick={close}>
+      <div className="preview" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={baseName(file.path)}>
+        <div className="preview-head">
+          <div className="preview-title">
+            <b>{baseName(file.path)}</b>
+            <span className="muted small">
+              {formatBytes(file.size)}
+              {file.mtime ? ` · ${new Date(file.mtime).toLocaleString()}` : ''} · {index + 1} of {files.length.toLocaleString()}
+            </span>
+          </div>
+          {p && (
+            <button className="btn small" onClick={() => run(api.openPreview(p.localPath))}>
+              <Icon name="external" size={14} /> Open in another app
+            </button>
+          )}
+          {onCopy && (
+            <button className="btn small" onClick={() => onCopy(file)}>
+              <Icon name="download" size={14} /> Copy to computer
+            </button>
+          )}
+          <button className="btn small" onClick={close} aria-label="Close">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+        <div className="preview-body">
+          {index > 0 && (
+            <button className="preview-nav prev" onClick={() => setIndex(index - 1)} aria-label="Previous">
+              ‹
+            </button>
+          )}
+          {error ? (
+            <div className="preview-msg error-text">{error}</div>
+          ) : !p ? (
+            <div className="preview-msg muted">Getting {baseName(file.path)} from {device.name}…</div>
+          ) : p.url && p.kind === 'image' ? (
+            <img src={p.url} alt={baseName(file.path)} />
+          ) : p.url && p.kind === 'video' ? (
+            <video src={p.url} controls autoPlay />
+          ) : p.url && p.kind === 'audio' ? (
+            <audio src={p.url} controls autoPlay />
+          ) : (
+            <div className="preview-msg">
+              <p className="muted">This file can’t be shown here.</p>
+              <button className="btn primary" onClick={() => run(api.openPreview(p.localPath))}>
+                <Icon name="external" size={14} /> Open in another app
+              </button>
+            </div>
+          )}
+          {index < files.length - 1 && (
+            <button className="preview-nav next" onClick={() => setIndex(index + 1)} aria-label="Next">
+              ›
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -328,13 +557,17 @@ function FileTable({
   setPicked,
   columns,
   onOpen,
+  onPreview,
 }: {
   files: RemoteFile[];
   all: RemoteFile[];
   picked: Set<string>;
   setPicked: (s: Set<string>) => void;
   columns: ('name' | 'album' | 'date' | 'size')[];
+  /** Folders: open them. */
   onOpen?: (f: RemoteFile) => void;
+  /** Files: view them. */
+  onPreview?: (f: RemoteFile) => void;
 }) {
   const allOn = all.length > 0 && all.every((f) => picked.has(f.path));
   const toggle = (p: string, on: boolean) => {
@@ -358,12 +591,13 @@ function FileTable({
             <input type="checkbox" checked={picked.has(f.path)} onChange={(e) => toggle(f.path, e.target.checked)} />
             <span className="file-name" title={f.path}>
               <Icon name={f.dir ? 'folder' : fileIcon(f.path)} size={14} />
-              {f.dir && onOpen ? (
+              {(f.dir ? onOpen : onPreview) ? (
                 <button
                   className="link-name"
+                  title={f.dir ? 'Open folder' : 'View'}
                   onClick={(e) => {
                     e.preventDefault();
-                    onOpen(f);
+                    (f.dir ? onOpen : onPreview)?.(f);
                   }}
                 >
                   {baseName(f.path)}
@@ -413,8 +647,9 @@ function Information({ state, device }: { state: AppState; device: PhoneDevice }
         <p className="muted small">Saved as a vCard (.vcf) and CSV files. Many phones block call log and SMS for USB tools; MinTransfer says so if that happens.</p>
       )}
       <DestinationRow state={state} />
+      <SpaceWarning free={state.space.transfer} need={device.platform === 'ios' ? phoneUsed(device) : null} estimate what="reading the iPhone for this information" />
       <div className="cta-row">
-        <button className="btn primary large" disabled={busy || !chosen.length} onClick={() => run(api.startTransfer({ deviceId: device.id, items: chosen }), 'Export started')}>
+        <button className="btn primary large" disabled={busy || !chosen.length || lowSpace(state)} onClick={() => run(api.startTransfer({ deviceId: device.id, items: chosen }), 'Export started')}>
           <Icon name="download" size={17} /> Export to computer
         </button>
       </div>
@@ -544,6 +779,7 @@ function Explorer({ state, device }: { state: AppState; device: PhoneDevice }) {
   const [entries, setEntries] = useState<RemoteFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [viewing, setViewing] = useState<number | null>(null);
   const busy = useTransferBusy(state, device);
 
   const open = (target?: string) => {
@@ -571,6 +807,7 @@ function Explorer({ state, device }: { state: AppState; device: PhoneDevice }) {
   const cur = dir ?? root;
   const crumbs = crumbsOf(cur, root);
   const sel = (entries ?? []).filter((e) => picked.has(e.path));
+  const fileList = (entries ?? []).filter((e) => !e.dir);
 
   return (
     <Card
@@ -617,8 +854,7 @@ function Explorer({ state, device }: { state: AppState; device: PhoneDevice }) {
                 disabled={busy}
                 onClick={async () => {
                   if (!confirm(`Delete ${sel.length} item(s) from ${device.name}? Folders are deleted with everything in them. This can’t be undone.`)) return;
-                  await run(api.deleteFiles(device.id, sel.map((f) => f.path)), 'Deleted');
-                  open(cur);
+                  run(api.deleteFiles(device.id, sel.map((f) => f.path)), 'Deleting…');
                 }}
               >
                 <Icon name="trash" size={14} /> Delete
@@ -631,15 +867,40 @@ function Explorer({ state, device }: { state: AppState; device: PhoneDevice }) {
           {entries.length === 0 && !error ? (
             <div className="muted loading-row">This folder is empty.</div>
           ) : (
-            <FileTable files={entries.slice(0, 2000)} all={entries} picked={picked} setPicked={setPicked} columns={['name', 'date', 'size']} onOpen={(f) => open(f.path)} />
+            <FileTable files={entries.slice(0, 2000)} all={entries} picked={picked} setPicked={setPicked} columns={['name', 'date', 'size']} onOpen={(f) => open(f.path)} onPreview={(f) => setViewing(fileList.indexOf(f))} />
           )}
         </>
+      )}
+      {viewing != null && fileList[viewing] && (
+        <PreviewModal
+          device={device}
+          files={fileList}
+          index={viewing}
+          setIndex={setViewing}
+          onCopy={(f) => run(api.exportFiles(device.id, 'files', [f], cur), 'Copying to this computer')}
+        />
       )}
     </Card>
   );
 }
 
 // ------------------------------------------------------------------ helpers
+
+const GB = 1024 ** 3;
+
+function phoneUsed(d: PhoneDevice) {
+  return d.storageTotal && d.storageFree != null ? d.storageTotal - d.storageFree : null;
+}
+
+/** The transfer drive is nearly full. */
+function lowSpace(state: AppState) {
+  return state.space.transfer != null && state.space.transfer < 2 * GB;
+}
+
+/** Copying `bytes` would leave less than 1 GB free. */
+function tooBig(state: AppState, bytes: number) {
+  return state.space.transfer != null && bytes + GB > state.space.transfer;
+}
 
 function baseName(p: string) {
   return p.slice(p.lastIndexOf('/') + 1);

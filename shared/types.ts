@@ -182,6 +182,8 @@ export interface AppState {
   tools: ToolStatus[];
   /** MinTransfer's iPhone file/app helper is installed (needed for iPhone Photos, Videos, Apps and Explorer). */
   iosFiles: boolean;
+  /** Free bytes on the drives holding the backup and transfer folders (null if unknown). */
+  space: { backup: number | null; transfer: number | null };
   backups: BackupRecord[];
   jobs: Job[];
   settings: AppSettings;

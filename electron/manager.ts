@@ -7,7 +7,8 @@ import path from 'node:path';
 import type { AndroidService } from './android';
 import type { IosService } from './ios';
 import type { JobContext } from './jobs';
-import { formatBytes, safeName } from '../shared/export';
+import { formatBytes, safeName, spaceProblem } from '../shared/export';
+import { freeSpace } from './fsutil';
 import { CopyItem, MediaView, PhoneApp, RemoteFile, TRANSFER_ITEMS } from '../shared/transfer';
 import { SDCARD } from '../shared/android';
 import type { CategoryResult, PhoneDevice, TransferItemId } from '../shared/types';
@@ -76,11 +77,20 @@ export class PhoneManager {
       return out;
     }
     const bytes = todo.reduce((n, i) => n + i.size, 0);
+    const problem = spaceProblem(freeSpace(out), bytes);
+    if (problem) throw new Error(problem);
     ctx.log(`Copying ${todo.length.toLocaleString()} file(s), ${formatBytes(bytes)}, to ${out}`);
     const r = d.platform === 'ios' ? await this.ios.copyFrom(ctx, d.id, todo) : await this.android.copyFrom(ctx, d.id, todo);
     if (r.failed) ctx.log(`⚠ ${r.failed} file(s) could not be copied.`);
     ctx.progress(1, `Copied ${r.files.toLocaleString()} file(s)${skipped ? `, ${skipped.toLocaleString()} already here` : ''}`);
     return out;
+  }
+
+  /** Copies one file (for previews); throws if the phone didn't send it. */
+  async copyOne(ctx: JobContext, d: PhoneDevice, item: CopyItem): Promise<void> {
+    fs.mkdirSync(path.dirname(item.local), { recursive: true });
+    const r = d.platform === 'ios' ? await this.ios.copyFrom(ctx, d.id, [item]) : await this.android.copyFrom(ctx, d.id, [item]);
+    if (!r.files) throw new Error('The phone didn’t send this file.');
   }
 
   importDir(d: PhoneDevice, view: MediaView | 'files', dir?: string): string {
@@ -99,8 +109,10 @@ export class PhoneManager {
     return n;
   }
 
-  remove(d: PhoneDevice, paths: string[]): Promise<void> {
-    return d.platform === 'ios' ? this.ios.remove(d.id, paths) : this.android.remove(d.id, paths);
+  async remove(d: PhoneDevice, paths: string[], ctx?: JobContext): Promise<void> {
+    if (d.platform === 'ios') await this.ios.remove(d.id, paths);
+    else await this.android.remove(d.id, paths, ctx);
+    ctx?.progress(1, `Deleted ${paths.length.toLocaleString()} item(s) from ${d.name}`);
   }
 
   apps(d: PhoneDevice): Promise<PhoneApp[]> {
@@ -129,6 +141,11 @@ export class PhoneManager {
   /** Home / Information: export whole kinds of content (contacts, messages, all photos…). */
   async exportItems(ctx: JobContext, d: PhoneDevice, items: TransferItemId[]): Promise<string> {
     const out = this.deviceFolder(d);
+    // iPhone contacts, messages… come from a temporary full backup, which needs about as much room as the phone uses.
+    if (d.platform === 'ios' && items.some((i) => TRANSFER_ITEMS.find((t) => t.id === i)?.ios === 'backup')) {
+      const problem = spaceProblem(freeSpace(out), phoneUsed(d) ?? 0);
+      if (problem) throw new Error(`${problem} (iPhone ${items.length > 1 ? 'information' : TRANSFER_ITEMS.find((t) => t.id === items[0])?.label.toLowerCase()} is read from a temporary full backup.)`);
+    }
     fs.mkdirSync(out, { recursive: true });
     let results: CategoryResult[] = [];
     if (d.platform === 'ios') {
@@ -163,6 +180,11 @@ export class PhoneManager {
     ctx.progress(1, 'Transfer finished');
     return out;
   }
+}
+
+/** Bytes in use on the phone, when known. */
+export function phoneUsed(d: PhoneDevice): number | null {
+  return d.storageTotal && d.storageFree != null ? Math.max(0, d.storageTotal - d.storageFree) : null;
 }
 
 function sameFile(i: CopyItem): boolean {

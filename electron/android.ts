@@ -526,10 +526,16 @@ export class AndroidService {
     return n;
   }
 
-  async remove(serial: string, paths: string[]): Promise<void> {
-    for (const part of chunk(paths.map(safeRemote), 50)) await this.shell(serial, `rm -rf -- ${part.map(shQuote).join(' ')}; true`, { timeoutMs: 120000 });
+  async remove(serial: string, paths: string[], ctx?: JobContext): Promise<void> {
+    const parts = chunk(paths.map(safeRemote), 50);
+    for (let i = 0; i < parts.length; i++) {
+      ctx?.check();
+      ctx?.progress(i / parts.length, `Deleted ${(i * 50).toLocaleString()} of ${paths.length.toLocaleString()}`);
+      await this.shell(serial, `rm -rf -- ${parts[i].map(shQuote).join(' ')}; true`, { timeoutMs: 120000, signal: ctx?.signal });
+    }
     await this.rescanMedia(serial);
   }
+
 
   async apps(serial: string): Promise<PhoneApp[]> {
     const pkgs = parsePackageList(await this.shell(serial, 'pm list packages -3 -f')).filter((p) => isSafePackageName(p.name));

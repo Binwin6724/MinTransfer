@@ -39,7 +39,9 @@ function useRoute() {
     // Screenshot mode: "/transfer#photos" opens the Transfer page on its Photos tab.
     const off = api.onCapture((p) => {
       const [r, tab] = p.route.split('#');
-      sessionStorage.setItem('mt.transferTab', tab || 'home');
+      sessionStorage.setItem('mt.transferTab', (tab || 'home').replace(/-preview$/, ''));
+      if (tab?.endsWith('-preview')) sessionStorage.setItem('mt.capturePreview', '1');
+      else sessionStorage.removeItem('mt.capturePreview');
       location.hash = r;
       setTick((t) => t + 1);
     });

@@ -15,12 +15,16 @@ export interface MintransferApi {
   listDir(deviceId: string, dir?: string): Promise<{ dir: string; root: string; entries: RemoteFile[] }>;
   exportFiles(deviceId: string, view: 'photos' | 'videos' | 'music' | 'files', files: RemoteFile[], base?: string): Promise<string>;
   importFiles(deviceId: string, view: 'photos' | 'videos' | 'music' | 'files', dir?: string): Promise<string | null>;
-  deleteFiles(deviceId: string, paths: string[]): Promise<void>;
+  deleteFiles(deviceId: string, paths: string[]): Promise<string>;
   listApps(deviceId: string): Promise<PhoneApp[]>;
   exportApps(deviceId: string, ids: string[]): Promise<string>;
   installApps(deviceId: string): Promise<string | null>;
   uninstallApp(deviceId: string, id: string): Promise<void>;
   openTransferFolder(deviceId: string): Promise<void>;
+  preview(deviceId: string, file: RemoteFile): Promise<{ url: string | null; kind: 'image' | 'video' | 'audio' | 'other'; localPath: string }>;
+  cancelPreview(): Promise<void>;
+  openImageCapture(): Promise<void>;
+  openPreview(localPath: string): Promise<void>;
   startErase(req: EraseRequest): Promise<string>;
   setIosEncryption(udid: string, on: boolean, password: string): Promise<string>;
   scanTrash(deviceId: string): Promise<TrashItem[]>;

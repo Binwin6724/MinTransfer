@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { PageProps } from '../App';
 import { api, navigate, run } from '../api';
-import { Banner, Card, Check, DeviceNotReady, DevicePicker, JobCard, PageHeader, latestJob, pickDevice } from '../components/Common';
+import { Banner, Card, Check, DeviceNotReady, DevicePicker, FreeSpace, JobCard, PageHeader, SpaceWarning, latestJob, pickDevice } from '../components/Common';
 import { Icon } from '../components/Icon';
 import { formatBytes } from '../../shared/export';
 import type { AndroidCategoryId } from '../../shared/types';
@@ -23,6 +23,8 @@ export function Backup({ state, selected, select }: PageProps) {
   const job = device ? latestJob(state, ['backup'], device.id) : undefined;
   const busy = job?.status === 'running';
   const pwOk = !encrypt || (pw.length >= 4 && pw === pw2);
+  const used = device?.storageTotal && device.storageFree != null ? device.storageTotal - device.storageFree : null;
+  const full = state.space.backup != null && state.space.backup < 2 * 1024 ** 3;
 
   const start = () => {
     if (!device) return;
@@ -116,8 +118,7 @@ export function Backup({ state, selected, select }: PageProps) {
               <div>
                 <div className="mono">{state.settings.backupDir}</div>
                 <div className="muted small">
-                  Phone uses {device.storageTotal && device.storageFree != null ? formatBytes(device.storageTotal - device.storageFree) : 'unknown space'}. Make sure
-                  this drive has room.
+                  Phone uses {used != null ? formatBytes(used) : 'unknown space'} · <FreeSpace free={state.space.backup} />
                 </div>
               </div>
               <button
@@ -130,6 +131,7 @@ export function Backup({ state, selected, select }: PageProps) {
                 Change…
               </button>
             </div>
+            <SpaceWarning free={state.space.backup} need={used} estimate what="this backup" />
             <label className="inline-label">
               Note (optional)
               <input value={label} placeholder="e.g. Before upgrading" onChange={(e) => setLabel(e.target.value)} maxLength={80} />
@@ -138,7 +140,7 @@ export function Backup({ state, selected, select }: PageProps) {
 
           <div className="cta-row">
             {job && <JobCard job={job} />}
-            <button className="btn primary large" disabled={busy || (device.platform === 'ios' && !pwOk)} onClick={start}>
+            <button className="btn primary large" disabled={busy || full || (device.platform === 'ios' && !pwOk)} onClick={start}>
               <Icon name="backup" size={17} /> {busy ? 'Backing up…' : `Back up ${device.name}`}
             </button>
           </div>

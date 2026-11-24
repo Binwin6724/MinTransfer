@@ -96,6 +96,11 @@ export function run(bin: string, args: string[], opts: RunOptions = {}): Promise
       settled = true;
       resolve({ code, stdout, stderr, all });
     });
+    // If the tool exits (or is cancelled) before reading all its input, writing to it fails with
+    // EPIPE. That's expected; without a handler Node would treat it as an uncaught exception.
+    child.stdin?.on('error', () => {});
+    child.stdout?.on('error', () => {});
+    child.stderr?.on('error', () => {});
     if (opts.input != null) child.stdin?.end(opts.input);
     else child.stdin?.end();
   });

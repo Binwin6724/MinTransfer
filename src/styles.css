@@ -341,3 +341,29 @@ button.link:disabled { opacity: 0.4; cursor: default; }
 .btn.more { margin-top: 10px; }
 .device-line { margin-bottom: 14px; }
 .list-toolbar .select { width: auto; min-width: 220px; flex: 0 0 auto; }
+
+/* Delete confirmation */
+.delete-panel { border: 1px solid rgba(239, 68, 88, 0.45); background: rgba(239, 68, 88, 0.07); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.delete-head { display: flex; align-items: center; gap: 8px; color: var(--danger); }
+.delete-head b { color: var(--text); }
+.delete-panel p { margin: 6px 0 12px; }
+.delete-actions { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.delete-actions .inline-label { flex: 1; min-width: 200px; margin: 0; }
+.ios-delete { margin-top: 12px; }
+.ios-delete ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
+.hint { margin: 0 0 6px; }
+
+/* Preview */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 32px; }
+.preview { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 14px; width: min(1100px, 100%); height: min(800px, 100%); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); }
+.preview-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.preview-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.preview-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-body { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; background: #000; }
+.preview-body img, .preview-body video { max-width: 100%; max-height: 100%; object-fit: contain; }
+.preview-body audio { width: 70%; }
+.preview-msg { text-align: center; padding: 24px; color: #ddd; }
+.preview-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 34px; cursor: pointer; }
+.preview-nav:hover { background: rgba(255, 255, 255, 0.22); }
+.preview-nav.prev { left: 12px; }
+.preview-nav.next { right: 12px; }
