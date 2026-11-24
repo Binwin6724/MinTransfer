@@ -28,7 +28,9 @@ import {
   trashScanCommand,
 } from '../shared/android';
 import { ANDROID_CALL_TYPES, androidContactsToCards, csv, isoTime, toVCard } from '../shared/export';
-import type { AndroidCategoryId, BackupRecord, CategoryResult, PhoneDevice, TrashItem } from '../shared/types';
+import { mediaKind } from '../shared/ios';
+import { chunk, CopyItem, MediaView, parseStatLines, parseStatTypeLines, PhoneApp, RemoteFile, TRANSFER_ITEMS, VIEW_KIND } from '../shared/transfer';
+import type { AndroidCategoryId, BackupRecord, CategoryResult, PhoneDevice, TransferItemId, TrashItem } from '../shared/types';
 
 export const META_FILE = 'mintransfer.json';
 
@@ -434,6 +436,157 @@ export class AndroidService {
     ctx.progress(1, `Recovered ${items.length} file(s)`);
   }
 
+  // ---------------------------------------------------------------- phone manager
+
+  /** Folders searched for each media view. Camera videos live in DCIM next to photos. */
+  private static MEDIA_DIRS: Record<MediaView, string[]> = {
+    photos: ['DCIM', 'Pictures'],
+    videos: ['DCIM', 'Pictures', 'Movies'],
+    music: ['Music', 'Podcasts', 'Audiobooks', 'Ringtones', 'Notifications', 'Alarms', 'Recordings', 'Download'],
+  };
+
+  async listMedia(serial: string, view: MediaView, signal?: AbortSignal): Promise<RemoteFile[]> {
+    const dirs = AndroidService.MEDIA_DIRS[view].map((d) => shQuote(`${SDCARD}/${d}`));
+    // Hidden folders (.thumbnails, .trashed-…) are left out.
+    const cmd = `for d in ${dirs.join(' ')}; do [ -d "$d" ] && find "$d" -type f -not -path '*/.*' -exec stat -c '%s|%Y|%n' {} + ; done 2>/dev/null; true`;
+    const out = await this.shell(serial, cmd, { timeoutMs: 300000, signal, maxBuffer: 256 * 1024 * 1024 });
+    const kind = VIEW_KIND[view];
+    return parseStatLines(out)
+      .filter((f) => f.size > 0 && mediaKind(f.path) === kind)
+      .sort((a, b) => b.mtime - a.mtime);
+  }
+
+  async listDir(serial: string, dir: string): Promise<RemoteFile[]> {
+    const d = safeRemote(dir);
+    const out = await this.shell(serial, `find ${shQuote(d)} -mindepth 1 -maxdepth 1 -exec stat -L -c '%F|%s|%Y|%n' {} + 2>/dev/null; true`, { timeoutMs: 60000 });
+    return parseStatTypeLines(out).sort((a, b) => Number(b.dir) - Number(a.dir) || a.path.localeCompare(b.path));
+  }
+
+  /** Every file below the given folders (for exporting folders from Explorer). */
+  async walk(serial: string, dirs: string[]): Promise<RemoteFile[]> {
+    if (!dirs.length) return [];
+    const out = await this.shell(serial, `find ${dirs.map((d) => shQuote(safeRemote(d))).join(' ')} -type f -exec stat -c '%s|%Y|%n' {} + 2>/dev/null; true`, {
+      timeoutMs: 300000,
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    return parseStatLines(out);
+  }
+
+  /** Copies files off the phone. adb pull takes many files per call, so files are batched per folder. */
+  async copyFrom(ctx: JobContext, serial: string, items: CopyItem[]): Promise<{ files: number; failed: number }> {
+    const total = items.reduce((n, i) => n + i.size, 0) || 1;
+    let done = 0;
+    let files = 0;
+    let failed = 0;
+    const groups = new Map<string, CopyItem[]>();
+    for (const it of items) {
+      const key = `${path.posix.dirname(it.remote)}\n${path.dirname(it.local)}`;
+      groups.set(key, [...(groups.get(key) ?? []), it]);
+    }
+    for (const group of groups.values()) {
+      const localDir = path.dirname(group[0].local);
+      fs.mkdirSync(localDir, { recursive: true });
+      for (const part of chunk(group, 25)) {
+        ctx.check();
+        // adb names pulled files after the source, so only same-named targets can be batched.
+        const same = part.filter((p) => path.basename(p.local) === path.posix.basename(p.remote));
+        const renamed = part.filter((p) => !same.includes(p));
+        if (same.length) {
+          const r = await this.adb(serial, ['pull', '-a', ...same.map((p) => p.remote), localDir], { timeoutMs: 0, signal: ctx.signal });
+          if (r.code !== 0) ctx.log(r.all.trim().split('\n').slice(-1)[0]);
+        }
+        for (const p of renamed) {
+          const r = await this.adb(serial, ['pull', '-a', p.remote, p.local], { timeoutMs: 0, signal: ctx.signal });
+          if (r.code !== 0) ctx.log(r.all.trim().split('\n').slice(-1)[0]);
+        }
+        for (const p of part) {
+          if (fs.existsSync(p.local)) files++;
+          else failed++;
+          done += p.size;
+        }
+        ctx.progress(Math.min(0.99, done / total), `Copied ${files.toLocaleString()} of ${items.length.toLocaleString()} files`);
+      }
+    }
+    return { files, failed };
+  }
+
+  /** Copies files from this computer into a folder on the phone. */
+  async copyTo(ctx: JobContext, serial: string, locals: string[], remoteDir: string): Promise<number> {
+    const dir = safeRemote(remoteDir);
+    await this.shell(serial, `mkdir -p ${shQuote(dir)}`);
+    let n = 0;
+    for (let i = 0; i < locals.length; i++) {
+      ctx.check();
+      ctx.progress(i / locals.length, `Copying ${path.basename(locals[i])} (${i + 1} of ${locals.length})`);
+      const r = await this.adb(serial, ['push', locals[i], `${dir}/`], { timeoutMs: 0, signal: ctx.signal });
+      if (r.code === 0) n++;
+      else ctx.log(`⚠ ${path.basename(locals[i])}: ${r.all.trim().split('\n').pop()}`);
+    }
+    await this.rescanMedia(serial);
+    return n;
+  }
+
+  async remove(serial: string, paths: string[]): Promise<void> {
+    for (const part of chunk(paths.map(safeRemote), 50)) await this.shell(serial, `rm -rf -- ${part.map(shQuote).join(' ')}; true`, { timeoutMs: 120000 });
+    await this.rescanMedia(serial);
+  }
+
+  async apps(serial: string): Promise<PhoneApp[]> {
+    const pkgs = parsePackageList(await this.shell(serial, 'pm list packages -3 -f')).filter((p) => isSafePackageName(p.name));
+    const sizes = new Map<string, number>();
+    const apks = pkgs.map((p) => p.apk).filter(Boolean);
+    for (const part of chunk(apks, 60)) {
+      for (const f of parseStatLines(await this.shell(serial, `stat -c '%s|%Y|%n' ${part.map(shQuote).join(' ')} 2>/dev/null; true`))) sizes.set(f.path, f.size);
+    }
+    return pkgs.map((p) => ({ id: p.name, name: p.name, version: '', apk: p.apk, size: sizes.get(p.apk) }));
+  }
+
+  /** Saves the APKs (base + splits) of the given apps into dir/<package>/. */
+  async exportApps(ctx: JobContext, serial: string, ids: string[], dir: string): Promise<number> {
+    let ok = 0;
+    for (let i = 0; i < ids.length; i++) {
+      ctx.check();
+      if (!isSafePackageName(ids[i])) continue;
+      ctx.progress(i / ids.length, `Saving ${ids[i]} (${i + 1} of ${ids.length})`);
+      const dest = path.join(dir, ids[i]);
+      fs.mkdirSync(dest, { recursive: true });
+      let good = true;
+      for (const apk of parsePmPath(await this.shell(serial, `pm path ${ids[i]}`))) {
+        const r = await this.adb(serial, ['pull', apk, path.join(dest, path.posix.basename(apk))], { timeoutMs: 600000, signal: ctx.signal });
+        if (r.code !== 0) good = false;
+      }
+      if (good) ok++;
+      else ctx.log(`Could not copy ${ids[i]}`);
+    }
+    return ok;
+  }
+
+  async installApks(ctx: JobContext, serial: string, files: string[]): Promise<number> {
+    let ok = 0;
+    for (let i = 0; i < files.length; i++) {
+      ctx.check();
+      ctx.progress(i / files.length, `Installing ${path.basename(files[i])} (${i + 1} of ${files.length})`);
+      const r = await this.adb(serial, ['install', '-r', files[i]], { timeoutMs: 600000, signal: ctx.signal });
+      if (/Success/.test(r.all)) ok++;
+      else ctx.log(`⚠ ${path.basename(files[i])}: ${r.all.trim().split('\n').pop()}`);
+    }
+    return ok;
+  }
+
+  async uninstall(serial: string, id: string): Promise<void> {
+    if (!isSafePackageName(id)) throw new Error('Invalid app id');
+    const r = await this.adb(serial, ['uninstall', id], { timeoutMs: 120000 });
+    if (!/Success/.test(r.all)) throw new Error(`Android didn’t remove ${id}: ${r.all.trim().split('\n').pop()}`);
+  }
+
+  /** Exports contacts / call log / SMS / apps / file categories for Transfer ▸ Information and Home. */
+  async exportData(ctx: JobContext, serial: string, item: TransferItemId, out: string): Promise<CategoryResult> {
+    const label = TRANSFER_ITEMS.find((t) => t.id === item)?.label ?? item;
+    if (item === 'contacts' || item === 'calls' || item === 'messages') return { id: item, label, ...(await this.backupProvider(ctx, serial, item, out)) };
+    if (item === 'apps') return { id: item, label, ...(await this.backupApps(ctx, serial, path.join(out, 'Apps'), (f) => ctx.progress(f))) };
+    return { id: item, label, ...(await this.pullCategory(ctx, serial, item as AndroidCategoryId, path.join(out, label), (f) => ctx.progress(f))) };
+  }
+
   // ---------------------------------------------------------------- erase
 
   async erase(ctx: JobContext, serial: string, opts: { wipeFolders: string[]; uninstallApps: boolean; rebootToRecovery: boolean }) {
@@ -487,3 +640,10 @@ function listTopLevel(filesDir: string): string[] {
 }
 
 export const ALL_ANDROID_CATEGORIES = ANDROID_CATEGORIES;
+
+/** Only shared storage may be browsed or changed. */
+export function safeRemote(p: string): string {
+  const norm = path.posix.normalize(p.replace(/\/+$/, '') || '/');
+  if (norm.includes('..') || !(norm === SDCARD || norm.startsWith(`${SDCARD}/`))) throw new Error(`Only shared storage (${SDCARD}) can be used: ${p}`);
+  return norm;
+}

@@ -14,12 +14,14 @@ export const IOS_ITEMS: { id: IosItemId; label: string; description: string }[] 
 ];
 
 const IMAGE_EXT = /\.(jpe?g|heic|heif|png|gif|dng|tiff?|webp|bmp)$/i;
-const VIDEO_EXT = /\.(mov|mp4|m4v|3gp|avi|hevc)$/i;
+const VIDEO_EXT = /\.(mov|mp4|m4v|3gp|avi|hevc|mkv|webm)$/i;
+const AUDIO_EXT = /\.(mp3|m4a|aac|wav|flac|ogg|opus|amr|wma|aiff?)$/i;
 
-/** Sorts a camera-roll file into photos, videos or neither (e.g. .AAE edit sidecars). */
-export function mediaKind(name: string): 'image' | 'video' | null {
+/** Sorts a file into photo, video, audio or none (e.g. .AAE edit sidecars). */
+export function mediaKind(name: string): 'image' | 'video' | 'audio' | null {
   if (IMAGE_EXT.test(name)) return 'image';
   if (VIDEO_EXT.test(name)) return 'video';
+  if (AUDIO_EXT.test(name)) return 'audio';
   return null;
 }
 

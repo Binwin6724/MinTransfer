@@ -11,8 +11,10 @@ import { readPlistFile } from './plist';
 import type { IosTool, ToolPaths } from './tools';
 import { META_FILE } from './android';
 import { IosBackupReader } from './iosBackup';
-import { appleModelName, IOS_ITEMS, classifyLockdownError, explainBackupError, parseBackupProgress, parseKeyValues, parseUdidList } from '../shared/ios';
-import type { BackupRecord, IosItemId, PhoneDevice } from '../shared/types';
+import { formatBytes } from '../shared/export';
+import { CopyItem, helperCommand, HelperParser, HelperReply, MediaView, PhoneApp, RemoteFile, TRANSFER_ITEMS, VIEW_KIND } from '../shared/transfer';
+import { appleModelName, mediaKind, classifyLockdownError, explainBackupError, parseBackupProgress, parseKeyValues, parseUdidList } from '../shared/ios';
+import type { BackupRecord, CategoryResult, PhoneDevice, TransferItemId } from '../shared/types';
 
 export class IosService {
   private info = new Map<string, { at: number; device: PhoneDevice }>();
@@ -200,72 +202,195 @@ export class IosService {
     return record;
   }
 
-  /**
-   * "Choose items" backup. iOS has no partial backup, so MinTransfer makes a full backup into a
-   * hidden staging folder, exports only the chosen items as ordinary files, then deletes the
-   * staging copy (or keeps it as a restorable full backup when keepFull is set).
-   */
-  async backupItems(
-    ctx: JobContext,
-    device: PhoneDevice,
-    dir: string,
-    items: IosItemId[],
-    opts: { keepFull?: boolean; label?: string },
-  ): Promise<BackupRecord> {
-    if (!items.length) throw new Error('Choose at least one thing to back up.');
-    if (device.backupEncryption)
-      throw new Error('Backup encryption is on for this iPhone, so its contents can’t be read. Make a full backup instead, or turn off encryption first.');
-    const udid = device.id;
-    const staging = path.join(dir, '.staging');
-    fs.mkdirSync(staging, { recursive: true });
-    const record: BackupRecord = {
-      id: path.basename(dir),
-      platform: 'ios',
-      source: 'mintransfer',
-      deviceId: udid,
-      deviceName: device.name,
-      deviceModel: device.model,
-      osVersion: device.osVersion,
-      createdAt: Date.now(),
-      path: dir,
-      dataPath: dir,
-      sizeBytes: 0,
-      categories: [],
-      encrypted: false,
-      complete: false,
-      note: opts.label,
-      kind: 'items',
-    };
-    const save = () => writeJson(path.join(dir, META_FILE), record);
-    save();
-    const phase = (from: number, to: number): JobContext => ({
-      ...ctx,
-      progress: (f, d) => ctx.progress(f == null ? null : from + f * (to - from), d),
-    });
+  // ---------------------------------------------------------------- transfer
 
+  /** Whether the mt-ios helper (files and apps) is available. */
+  get helperAvailable() {
+    return !!this.tools()['mt-ios'];
+  }
+
+  /**
+   * Runs mt-ios commands in one connection. `bases[i]` is the folder command i lists (null for
+   * walk / non-list commands). Calls onReply as each command finishes.
+   */
+  private async helper(udid: string, commands: string[], bases: (string | null)[], opts: { signal?: AbortSignal; onReply?: (i: number, r: HelperReply) => void } = {}): Promise<HelperReply[]> {
+    const bin = this.tools()['mt-ios'];
+    if (!bin) throw new Error('This feature needs MinTransfer’s iPhone file helper, which is missing from this installation. Reinstall MinTransfer.');
+    const parser = new HelperParser(bases, opts.onReply);
+    let fatal: Error | null = null;
+    const r = await run(bin, ['-u', udid], {
+      timeoutMs: 0,
+      signal: opts.signal,
+      env: toolEnv(bin),
+      input: commands.join('\n') + '\n',
+      maxBuffer: 1024 * 1024,
+      onLine: (line, stream) => {
+        if (stream !== 'stdout' || fatal) return;
+        try {
+          parser.line(line);
+        } catch (err) {
+          fatal = err as Error;
+        }
+      },
+    });
+    if (fatal) throw new Error(explainBackupError((fatal as Error).message));
+    if (!parser.ready) throw new Error(explainBackupError(r.all || 'The iPhone file service did not start.'));
+    return parser.replies;
+  }
+
+  async listDir(udid: string, dir: string): Promise<RemoteFile[]> {
+    const [r] = await this.helper(udid, [helperCommand('ls', dir)], [dir]);
+    if (!r?.ok) throw new Error(r?.error ?? `Couldn’t open ${dir}`);
+    return r.entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.path.localeCompare(b.path));
+  }
+
+  async walk(udid: string, dirs: string[], signal?: AbortSignal): Promise<RemoteFile[]> {
+    if (!dirs.length) return [];
+    const replies = await this.helper(udid, dirs.map((d) => helperCommand('walk', d)), dirs.map(() => null), { signal });
+    return replies.flatMap((r) => r.entries).filter((f) => !f.dir);
+  }
+
+  /** Camera-roll photos or videos. iPhone music isn't reachable (Apple keeps it in the Music app's private library). */
+  async listMedia(udid: string, view: MediaView, signal?: AbortSignal): Promise<RemoteFile[]> {
+    if (view === 'music') return [];
+    const kind = VIEW_KIND[view];
+    return (await this.walk(udid, ['/DCIM'], signal)).filter((f) => mediaKind(f.path) === kind && f.size > 0).sort((a, b) => b.mtime - a.mtime);
+  }
+
+  async copyFrom(ctx: JobContext, udid: string, items: CopyItem[]): Promise<{ files: number; failed: number }> {
+    const total = items.reduce((n, i) => n + i.size, 0) || 1;
+    let done = 0;
+    let files = 0;
+    let failed = 0;
+    for (const it of items) fs.mkdirSync(path.dirname(it.local), { recursive: true });
+    await this.helper(
+      udid,
+      items.map((i) => helperCommand('get', i.remote, i.local)),
+      items.map(() => null),
+      {
+        signal: ctx.signal,
+        onReply: (i, r) => {
+          done += items[i].size;
+          if (r.ok) {
+            files++;
+            if (items[i].mtime) {
+              try {
+                fs.utimesSync(items[i].local, new Date(items[i].mtime), new Date(items[i].mtime));
+              } catch {
+                /* keep going */
+              }
+            }
+          } else {
+            failed++;
+            ctx.log(`⚠ ${r.error}`);
+          }
+          if (i % 5 === 0 || i === items.length - 1) ctx.progress(Math.min(0.99, done / total), `Copied ${files.toLocaleString()} of ${items.length.toLocaleString()} files (${formatBytes(done)})`);
+        },
+      },
+    );
+    return { files, failed };
+  }
+
+  async copyTo(ctx: JobContext, udid: string, locals: string[], remoteDir: string): Promise<number> {
+    if (/^\/(DCIM|PhotoData)(\/|$)/i.test(remoteDir)) throw new Error('Files copied into the camera roll don’t appear in the Photos app. Choose another folder, such as Downloads.');
+    let n = 0;
+    const replies = await this.helper(
+      udid,
+      [helperCommand('mkdir', remoteDir), ...locals.map((l) => helperCommand('put', l, `${remoteDir === '/' ? '' : remoteDir}/${path.basename(l)}`))],
+      [null, ...locals.map(() => null)],
+      {
+        signal: ctx.signal,
+        onReply: (i, r) => {
+          if (i === 0) return;
+          if (r.ok) n++;
+          else ctx.log(`⚠ ${r.error}`);
+          ctx.progress(i / locals.length, `Copied ${n} of ${locals.length}`);
+        },
+      },
+    );
+    void replies;
+    return n;
+  }
+
+  async remove(udid: string, paths: string[]): Promise<void> {
+    for (const p of paths)
+      if (/^\/(DCIM|PhotoData)(\/|$)/i.test(p)) throw new Error('Photos and videos can only be deleted in the Photos app on the iPhone, so the Photos library stays intact.');
+    const replies = await this.helper(udid, paths.map((p) => helperCommand('rm', p)), paths.map(() => null));
+    const bad = replies.filter((r) => !r.ok);
+    if (bad.length) throw new Error(`${bad.length} item(s) couldn’t be deleted. Folders must be empty first. ${bad[0].error ?? ''}`);
+  }
+
+  async apps(udid: string): Promise<PhoneApp[]> {
+    const [r] = await this.helper(udid, ['apps'], [null]);
+    if (!r?.ok) throw new Error(r?.error ?? 'Couldn’t list apps');
+    return r.apps.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async uninstall(udid: string, id: string): Promise<void> {
+    if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error('Invalid app id');
+    const [r] = await this.helper(udid, [helperCommand('uninstall', id)], [null]);
+    if (!r?.ok) throw new Error(r?.error ?? `Couldn’t remove ${id}`);
+  }
+
+  /**
+   * Exports items for Transfer ▸ Information / Home. Photos and videos come straight from the
+   * camera roll; everything else lives in app storage that Apple only hands out through a full
+   * backup, so that part makes one in a temporary folder, exports the items and deletes it.
+   */
+  async exportData(ctx: JobContext, device: PhoneDevice, items: TransferItemId[], out: string): Promise<CategoryResult[]> {
+    if (!items.length) throw new Error('Choose at least one thing to transfer.');
+    fs.mkdirSync(out, { recursive: true });
+    const media: TransferItemId[] = this.helperAvailable ? items.filter((i) => i === 'photos' || i === 'videos') : [];
+    const viaBackup = items.filter((i) => !media.includes(i));
+    if (viaBackup.length && device.backupEncryption)
+      throw new Error(
+        `Backup encryption is on for this iPhone, so ${viaBackup.map((i) => TRANSFER_ITEMS.find((t) => t.id === i)?.label ?? i).join(', ')} can’t be read. Turn encryption off, or transfer Photos and Videos only.`,
+      );
+    const split = !media.length ? 0 : !viaBackup.length ? 1 : 0.3;
+    const results: CategoryResult[] = [];
+    for (let i = 0; i < media.length; i++) {
+      const view = media[i] as MediaView;
+      const label = view === 'photos' ? 'Photos' : 'Videos';
+      const pctx = scaled(ctx, (split * i) / media.length, (split * (i + 1)) / media.length);
+      pctx.progress(null, `Reading the camera roll…`);
+      const files = await this.listMedia(device.id, view, ctx.signal);
+      const items2: CopyItem[] = files.map((f) => ({ ...f, remote: f.path, local: path.join(out, label, ...f.path.split('/').slice(-2)) }));
+      const r = await this.copyFrom(pctx, device.id, items2);
+      const bytes = files.reduce((n, f) => n + f.size, 0);
+      results.push({ id: view, label, files: r.files, bytes, paths: r.files ? [label] : [], warning: r.failed ? `${r.failed} file(s) couldn’t be read` : r.files ? undefined : 'None on this iPhone' });
+    }
+    if (viaBackup.length) results.push(...(await this.exportViaBackup(ctx, device, viaBackup, out, scaled(ctx, split, 1))));
+    return results;
+  }
+
+  private async exportViaBackup(ctx: JobContext, device: PhoneDevice, items: TransferItemId[], out: string, pctx: JobContext): Promise<CategoryResult[]> {
+    const udid = device.id;
+    const staging = path.join(out, '.mt-backup');
+    fs.mkdirSync(staging, { recursive: true });
+    const results: CategoryResult[] = [];
     try {
-      // 1. Read everything off the phone (Apple only offers whole-device backups).
-      ctx.progress(null, 'Unlock the iPhone if it asks for its passcode. Reading the iPhone…');
+      // Apple only offers whole-device backups for app data such as Messages and Notes.
+      pctx.progress(null, 'Unlock the iPhone if it asks for its passcode. Reading the iPhone…');
       const net = device.wireless ? ['-n'] : [];
-      const r = await this.backup2(phase(0, 0.85), ['-u', udid, ...net, 'backup', '--full', staging]);
+      const r = await this.backup2(scaled(pctx, 0, 0.85), ['-u', udid, ...net, 'backup', '--full', staging]);
       const ok = r.code === 0 && /Backup Successful|Finished/i.test(r.all) && !/Backup Failed/i.test(r.all);
       if (!ok) throw new Error(explainBackupError(r.all));
       const dataPath = path.join(staging, udid);
       if (IosBackupReader.isEncrypted(dataPath))
-        throw new Error('The iPhone encrypted this backup, so its contents can’t be read. Make a full backup instead, or turn off encryption first.');
+        throw new Error('The iPhone encrypted this backup, so its contents can’t be read. Turn off backup encryption and try again.');
 
-      // 2. Export just the chosen items.
       const reader = await IosBackupReader.open(dataPath);
       try {
         for (let i = 0; i < items.length; i++) {
           ctx.check();
-          const info = IOS_ITEMS.find((x) => x.id === items[i]);
-          const label = info?.label ?? items[i];
-          ctx.progress(0.85 + (0.13 * i) / items.length, `Saving ${label}…`);
-          const before = new Set(fs.readdirSync(dir));
+          const label = TRANSFER_ITEMS.find((t) => t.id === items[i])?.label ?? items[i];
+          const from = 0.85 + (0.15 * i) / items.length;
+          const to = 0.85 + (0.15 * (i + 1)) / items.length;
+          pctx.progress(from, `Saving ${label}…`);
+          const before = new Set(fs.readdirSync(out));
           let warning: string | undefined;
           try {
-            await reader.extract(phase(0.85 + (0.13 * i) / items.length, 0.85 + (0.13 * (i + 1)) / items.length), items[i], dir);
+            await reader.extract(scaled(pctx, from, to), BACKUP_GROUP[items[i]] ?? items[i], out);
           } catch (err) {
             if (err instanceof CancelledError) throw err;
             // One missing item (e.g. contacts kept only in iCloud) shouldn't fail the others.
@@ -275,43 +400,27 @@ export class IosService {
           const paths: string[] = [];
           let files = 0;
           let bytes = 0;
-          for (const p of fs.readdirSync(dir).filter((f) => !before.has(f))) {
-            const s = dirStats(path.join(dir, p));
-            if (!s.files) {
-              fs.rmSync(path.join(dir, p), { recursive: true, force: true });
+          for (const p of fs.readdirSync(out).filter((f) => !before.has(f))) {
+            const st = dirStats(path.join(out, p));
+            if (!st.files) {
+              fs.rmSync(path.join(out, p), { recursive: true, force: true });
               continue;
             }
             paths.push(p);
-            files += s.files;
-            bytes += s.bytes;
+            files += st.files;
+            bytes += st.bytes;
           }
           if (!files) warning ??= 'Nothing found on this iPhone';
-          record.categories.push({ id: items[i], label, files, bytes, paths, warning });
-          if (warning) ctx.log(`${label}: ${warning}`);
-          else
-          ctx.log(`${label}: ${files.toLocaleString()} files`);
+          results.push({ id: items[i], label, files, bytes, paths, warning });
+          ctx.log(warning ? `${label}: ${warning}` : `${label}: ${files.toLocaleString()} files`);
         }
       } finally {
         reader.close();
       }
-
-      // 3. Keep or drop the full copy.
-      if (opts.keepFull) {
-        fs.renameSync(dataPath, path.join(dir, udid));
-        const s = dirStats(path.join(dir, udid));
-        record.kind = 'full';
-        record.dataPath = path.join(dir, udid);
-        record.categories.push({ id: 'full', label: 'Full device backup', files: s.files, bytes: s.bytes, paths: [udid] });
-      }
-      record.complete = true;
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
-      record.sizeBytes = record.categories.reduce((n, c) => n + c.bytes, 0);
-      save();
     }
-    const total = record.categories.filter((c) => c.id !== 'full').reduce((n, c) => n + c.files, 0);
-    ctx.progress(1, `Backup finished: ${total.toLocaleString()} files saved`);
-    return record;
+    return results;
   }
 
   // ---------------------------------------------------------------- restore
@@ -364,3 +473,12 @@ function osName(deviceClass?: string) {
   if (deviceClass === 'iPad') return 'iPadOS';
   return 'iOS';
 }
+
+/** Maps a transfer item to the backup reader's export group. */
+const BACKUP_GROUP: Partial<Record<TransferItemId, string>> = { photos: 'images', videos: 'videos' };
+
+/** A job context whose progress 0..1 maps onto from..to of the parent's bar. */
+function scaled(ctx: JobContext, from: number, to: number): JobContext {
+  return { ...ctx, progress: (f, d) => ctx.progress(f == null ? null : from + f * (to - from), d) };
+}
+

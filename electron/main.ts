@@ -7,16 +7,29 @@ import { freeSpace } from './fsutil';
 import { IosService } from './ios';
 import { JobContext, JobRunner } from './jobs';
 import { Library } from './library';
+import { ExportView, PhoneManager } from './manager';
 import { log } from './logger';
 import { JsonStore } from './store';
 import { APPLE_DEVICES_STORE, PLATFORM_TOOLS_TERMS, Tools } from './tools';
 import { backupFolderName, formatBytes } from '../shared/export';
-import type { AppSettings, AppState, JobKind, BackupRequest, EraseRequest, ExtractRequest, PhoneDevice, RestoreRequest, TrashItem } from '../shared/types';
+import type { MediaView, RemoteFile } from '../shared/transfer';
+import type { AppSettings, AppState, JobKind, BackupRequest, EraseRequest, ExtractRequest, PhoneDevice, RestoreRequest, TransferRequest, TrashItem } from '../shared/types';
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
 const args = process.argv.slice(1);
 const captureDir = argValue('--capture-screenshots');
 export const ERASE_PHRASE = 'ERASE';
+
+/** Sample camera roll for --capture-screenshots. */
+function demoMedia(view: MediaView): RemoteFile[] {
+  const ext = view === 'photos' ? 'HEIC' : view === 'videos' ? 'MOV' : 'm4a';
+  return Array.from({ length: 24 }, (_, i) => ({
+    path: `/DCIM/${100 + Math.floor(i / 10)}APPLE/IMG_${String(4821 - i).padStart(4, '0')}.${ext}`,
+    size: (view === 'videos' ? 48e6 : 2.6e6) + i * 131072,
+    mtime: Date.UTC(2026, 10, 20, 18, 0) - i * 3.7e6,
+    dir: false,
+  }));
+}
 
 /** Sample phones shown only in --capture-screenshots mode when nothing is plugged in. */
 const DEMO_DEVICES: PhoneDevice[] = [
@@ -44,6 +57,7 @@ let android: AndroidService;
 let ios: IosService;
 let jobs: JobRunner;
 let library: Library;
+let manager: PhoneManager;
 let devices: PhoneDevice[] = [];
 let pollTimer: NodeJS.Timeout | null = null;
 let polling = false;
@@ -58,6 +72,7 @@ function defaultSettings(): AppSettings {
     customToolDir: '',
     pollMs: 2000,
     autoSetupAndroid: true,
+    transferDir: path.join(app.getPath('documents'), 'MinTransfer'),
   };
 }
 
@@ -71,6 +86,7 @@ function state(): AppState {
     version: app.getVersion(),
     devices,
     tools: tools.status,
+    iosFiles: ios.helperAvailable,
     backups: library.backups,
     jobs: jobs.jobs,
     settings: settings(),
@@ -220,8 +236,7 @@ function registerIpc() {
     const used = d.storageTotal && d.storageFree != null ? d.storageTotal - d.storageFree : null;
     const job = jobs.start('backup', `Back up ${d.name}`, d.id, async (ctx) => {
       if (free != null && used != null && free < used * 0.25) ctx.log(`⚠ Only ${formatBytes(free)} free on the backup drive; the phone uses ${formatBytes(used)}.`);
-      if (d.platform === 'ios' && req.iosItems) await ios.backupItems(ctx, d, dir, req.iosItems, { keepFull: req.keepFull, label: req.label });
-      else if (d.platform === 'ios') await ios.backup(ctx, d, dir, { encryptPassword: req.encryptPassword, label: req.label });
+      if (d.platform === 'ios') await ios.backup(ctx, d, dir, { encryptPassword: req.encryptPassword, label: req.label });
       else {
         if (!req.categories.length) throw new Error('Choose at least one thing to back up.');
         await android.backup(ctx, d, req.categories, dir, req.label);
@@ -320,7 +335,7 @@ function registerIpc() {
   );
 
   handle('settings:set', async (patch: Partial<AppSettings>) => {
-    const allowed: (keyof AppSettings)[] = ['theme', 'backupDir', 'showSystemBackups', 'customToolDir', 'pollMs', 'autoSetupAndroid'];
+    const allowed: (keyof AppSettings)[] = ['theme', 'backupDir', 'showSystemBackups', 'customToolDir', 'pollMs', 'autoSetupAndroid', 'transferDir'];
     const clean: Partial<AppSettings> = {};
     for (const k of allowed) if (k in patch) (clean as Record<string, unknown>)[k] = patch[k];
     store.set({ settings: { ...settings(), ...clean } });
@@ -332,6 +347,68 @@ function registerIpc() {
     if ('backupDir' in clean || 'showSystemBackups' in clean) library.scan();
     if ('pollMs' in clean) startPolling();
     push(true);
+  });
+
+  // ---------------------------------------------------------------- Transfer (phone manager)
+  const views = ['photos', 'videos', 'music'];
+  handle('manage:media', (deviceId: string, view: MediaView) => {
+    if (!views.includes(view)) throw new Error('Unknown view');
+    if (captureDir && DEMO_DEVICES.some((x) => x.id === deviceId)) return demoMedia(view);
+    return manager.listMedia(device(deviceId), view);
+  });
+  handle('manage:dir', (deviceId: string, dir?: string) => {
+    const d = device(deviceId);
+    const target = dir || manager.rootDir(d);
+    return manager.listDir(d, target).then((entries) => ({ dir: target, root: manager.rootDir(d), entries }));
+  });
+  handle('manage:export', (deviceId: string, view: ExportView, files: RemoteFile[], base?: string) => {
+    const d = device(deviceId);
+    if (![...views, 'files'].includes(view) || !Array.isArray(files) || !files.length) throw new Error('Choose something to copy.');
+    const n = files.length;
+    return jobs.start('transfer', `Copy ${n.toLocaleString()} ${n === 1 ? 'item' : 'items'} from ${d.name}`, d.id, (ctx) => manager.exportFiles(ctx, d, view, files, base)).id;
+  });
+  handle('manage:import', async (deviceId: string, view: MediaView | 'files', dir?: string) => {
+    const d = device(deviceId);
+    const remoteDir = manager.importDir(d, view, dir);
+    const filters = view === 'photos' ? [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'heic', 'gif', 'webp'] }] : view === 'videos' ? [{ name: 'Videos', extensions: ['mp4', 'mov', 'm4v', 'mkv', '3gp', 'webm'] }] : view === 'music' ? [{ name: 'Audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus'] }] : [];
+    const r = await dialog.showOpenDialog(mainWindow!, { title: `Copy to ${d.name}`, properties: ['openFile', 'multiSelections'], filters });
+    if (r.canceled || !r.filePaths.length) return null;
+    return jobs.start('transfer', `Copy ${r.filePaths.length} file(s) to ${d.name}`, d.id, async (ctx) => {
+      await manager.importFiles(ctx, d, r.filePaths, remoteDir);
+    }).id;
+  });
+  handle('manage:delete', (deviceId: string, paths: string[]) => {
+    if (!Array.isArray(paths) || !paths.length) throw new Error('Nothing selected.');
+    return manager.remove(device(deviceId), paths);
+  });
+  handle('manage:apps', (deviceId: string) => {
+    if (captureDir && DEMO_DEVICES.some((x) => x.id === deviceId))
+      return ['Maps', 'Notes Pro', 'Photo Editor', 'Podcasts', 'Weather', 'Workout'].map((n, i) => ({ id: `com.example.${n.toLowerCase().replace(/ /g, '')}`, name: n, version: `${i + 2}.${i}`, size: (i + 1) * 31e6, dataSize: i * 9e6 }));
+    return manager.apps(device(deviceId));
+  });
+  handle('manage:exportApps', (deviceId: string, ids: string[]) => {
+    const d = device(deviceId);
+    return jobs.start('transfer', `Save ${ids.length} app(s) from ${d.name}`, d.id, (ctx) => manager.exportApps(ctx, d, ids)).id;
+  });
+  handle('manage:installApps', async (deviceId: string) => {
+    const d = device(deviceId);
+    const r = await dialog.showOpenDialog(mainWindow!, { title: `Install apps on ${d.name}`, properties: ['openFile', 'multiSelections'], filters: [{ name: 'Android apps', extensions: ['apk'] }] });
+    if (r.canceled || !r.filePaths.length) return null;
+    return jobs.start('transfer', `Install ${r.filePaths.length} app(s) on ${d.name}`, d.id, async (ctx) => {
+      await manager.installApps(ctx, d, r.filePaths);
+    }).id;
+  });
+  handle('manage:uninstall', (deviceId: string, id: string) => manager.uninstall(device(deviceId), id));
+  handle('transfer:start', (req: TransferRequest) => {
+    const d = device(req.deviceId);
+    if (!Array.isArray(req.items) || !req.items.length) throw new Error('Choose at least one thing to transfer.');
+    return jobs.start('transfer', `Transfer from ${d.name}`, d.id, (ctx) => manager.exportItems(ctx, d, req.items)).id;
+  });
+  handle('manage:openFolder', (deviceId: string) => {
+    const d = devices.find((x) => x.id === deviceId);
+    const dir = d ? manager.deviceFolder(d) : settings().transferDir;
+    fs.mkdirSync(dir, { recursive: true });
+    return shell.openPath(dir);
   });
 
   handle('dialog:folder', async (title: string, defaultPath?: string) => {
@@ -376,6 +453,8 @@ async function captureScreenshots(dir: string) {
   await wait(2500);
   const routes: [string, string, 'dark' | 'light'][] = [
     ['/', 'devices', 'dark'],
+    ['/transfer', 'transfer', 'dark'],
+    ['/transfer#photos', 'transfer-photos', 'dark'],
     ['/backup', 'backup', 'dark'],
     ['/restore', 'restore', 'dark'],
     ['/recover', 'recover', 'dark'],
@@ -403,9 +482,11 @@ app.whenReady().then(async () => {
   store = new JsonStore(path.join(app.getPath('userData'), 'mintransfer.json'), { settings: defaultSettings() }, (e) => log.error('store', e));
   store.set({ settings: { ...defaultSettings(), ...store.get().settings } });
   nativeTheme.themeSource = settings().theme;
-  tools = new Tools(path.join(app.getPath('userData'), 'tools'), process.resourcesPath ?? '', () => settings().customToolDir);
+  // Running from source, the bundled tools live in vendor/tools (see scripts/bundle-ios-tools-*.sh).
+  tools = new Tools(path.join(app.getPath('userData'), 'tools'), app.isPackaged ? (process.resourcesPath ?? '') : path.join(app.getAppPath(), 'vendor'), () => settings().customToolDir);
   android = new AndroidService(() => tools.paths.adb);
   ios = new IosService(() => tools.paths.ios);
+  manager = new PhoneManager(android, ios, () => settings().transferDir);
   jobs = new JobRunner(() => push());
   library = new Library(() => settings().backupDir, () => settings().showSystemBackups);
   registerIpc();

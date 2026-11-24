@@ -48,7 +48,7 @@ jobs:
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-libimobiledevice
+          install: mingw-w64-ucrt-x86_64-libimobiledevice mingw-w64-ucrt-x86_64-gcc
       - name: Bundle iPhone tools (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
@@ -63,10 +63,12 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
             test -f release/win-unpacked/resources/tools/libimobiledevice/idevicebackup2.exe
+            release/win-unpacked/resources/tools/libimobiledevice/mt-ios.exe --version
             release/win-unpacked/resources/tools/libimobiledevice/idevice_id.exe -l || true
           else
             app=$(ls -d release/mac*/MinTransfer.app | head -1)
             "$app/Contents/Resources/tools/libimobiledevice/idevicebackup2" --version
+            "$app/Contents/Resources/tools/libimobiledevice/mt-ios" --version
           fi
       - uses: actions/upload-artifact@v4
         with:

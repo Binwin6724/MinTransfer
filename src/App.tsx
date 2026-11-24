@@ -9,10 +9,12 @@ import { LibraryPage } from './pages/Library';
 import { Recover } from './pages/Recover';
 import { Restore } from './pages/Restore';
 import { Settings } from './pages/Settings';
+import { Transfer } from './pages/Transfer';
 import type { AppState } from '../shared/types';
 
 const NAV = [
   { route: '/', label: 'Devices', icon: 'phone' },
+  { route: '/transfer', label: 'Transfer', icon: 'transfer' },
   { route: '/backup', label: 'Backup', icon: 'backup' },
   { route: '/restore', label: 'Restore', icon: 'restore' },
   { route: '/recover', label: 'Recover', icon: 'recover' },
@@ -30,16 +32,23 @@ export interface PageProps {
 
 function useRoute() {
   const [route, setRoute] = useState(() => location.hash.replace(/^#/, '') || '/');
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     const on = () => setRoute(location.hash.replace(/^#/, '') || '/');
     window.addEventListener('hashchange', on);
-    const off = api.onCapture((p) => (location.hash = p.route));
+    // Screenshot mode: "/transfer#photos" opens the Transfer page on its Photos tab.
+    const off = api.onCapture((p) => {
+      const [r, tab] = p.route.split('#');
+      sessionStorage.setItem('mt.transferTab', tab || 'home');
+      location.hash = r;
+      setTick((t) => t + 1);
+    });
     return () => {
       window.removeEventListener('hashchange', on);
       off();
     };
   }, []);
-  return route;
+  return { route, tick };
 }
 
 function useTheme(state: AppState | null) {
@@ -80,7 +89,7 @@ function Toasts() {
 
 export function App() {
   const state = useAppState();
-  const route = useRoute();
+  const { route, tick } = useRoute();
   const [selected, setSelected] = useState<string | null>(null);
   useTheme(state);
   document.documentElement.dataset.platform = api.platform;
@@ -90,6 +99,8 @@ export function App() {
   const props: PageProps = { state, selected, select: setSelected };
   const page = (() => {
     switch (route) {
+      case '/transfer':
+        return <Transfer {...props} />;
       case '/backup':
         return <Backup {...props} />;
       case '/restore':
@@ -144,7 +155,9 @@ export function App() {
           <div className="version">v{state.version}</div>
         </div>
       </aside>
-      <main className="content">{page}</main>
+      <main className="content" key={tick}>
+        {page}
+      </main>
       <Toasts />
     </div>
   );

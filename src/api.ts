@@ -1,6 +1,7 @@
 // Typed access to the preload bridge plus a tiny external store for app state.
 import { useSyncExternalStore } from 'react';
-import type { AppSettings, AppState, BackupRequest, EraseRequest, ExtractRequest, RecoverGroup, RestoreRequest, TrashItem } from '../shared/types';
+import type { PhoneApp, RemoteFile } from '../shared/transfer';
+import type { AppSettings, AppState, BackupRequest, EraseRequest, ExtractRequest, RecoverGroup, RestoreRequest, TransferRequest, TrashItem } from '../shared/types';
 
 export interface MintransferApi {
   platform: string;
@@ -9,6 +10,17 @@ export interface MintransferApi {
   pairIos(udid: string): Promise<string>;
   startBackup(req: BackupRequest): Promise<string>;
   startRestore(req: RestoreRequest): Promise<string>;
+  startTransfer(req: TransferRequest): Promise<string>;
+  listMedia(deviceId: string, view: 'photos' | 'videos' | 'music'): Promise<RemoteFile[]>;
+  listDir(deviceId: string, dir?: string): Promise<{ dir: string; root: string; entries: RemoteFile[] }>;
+  exportFiles(deviceId: string, view: 'photos' | 'videos' | 'music' | 'files', files: RemoteFile[], base?: string): Promise<string>;
+  importFiles(deviceId: string, view: 'photos' | 'videos' | 'music' | 'files', dir?: string): Promise<string | null>;
+  deleteFiles(deviceId: string, paths: string[]): Promise<void>;
+  listApps(deviceId: string): Promise<PhoneApp[]>;
+  exportApps(deviceId: string, ids: string[]): Promise<string>;
+  installApps(deviceId: string): Promise<string | null>;
+  uninstallApp(deviceId: string, id: string): Promise<void>;
+  openTransferFolder(deviceId: string): Promise<void>;
   startErase(req: EraseRequest): Promise<string>;
   setIosEncryption(udid: string, on: boolean, password: string): Promise<string>;
   scanTrash(deviceId: string): Promise<TrashItem[]>;

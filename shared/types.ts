@@ -51,7 +51,7 @@ export interface ToolStatus {
   warning?: string;
 }
 
-export type JobKind = 'backup' | 'restore' | 'recover' | 'erase' | 'extract' | 'scan' | 'tools';
+export type JobKind = 'backup' | 'transfer' | 'restore' | 'recover' | 'erase' | 'extract' | 'scan' | 'tools';
 export type JobStatus = 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface Job {
@@ -171,6 +171,8 @@ export interface AppSettings {
   pollMs: number;
   /** Download Android Platform-Tools automatically when they are missing (accepted in the installer). */
   autoSetupAndroid: boolean;
+  /** Where Transfer saves the photos, videos, contacts… it copies off a phone. */
+  transferDir: string;
 }
 
 export interface AppState {
@@ -178,6 +180,8 @@ export interface AppState {
   version: string;
   devices: PhoneDevice[];
   tools: ToolStatus[];
+  /** MinTransfer's iPhone file/app helper is installed (needed for iPhone Photos, Videos, Apps and Explorer). */
+  iosFiles: boolean;
   backups: BackupRecord[];
   jobs: Job[];
   settings: AppSettings;
@@ -191,11 +195,27 @@ export interface BackupRequest {
   categories: AndroidCategoryId[];
   /** iOS: password to turn encryption on before the backup (optional, full backups only). */
   encryptPassword?: string;
-  /** iOS: save only these items as files instead of a full device backup. */
-  iosItems?: IosItemId[];
-  /** iOS items backup: also keep the full device backup it was made from. */
-  keepFull?: boolean;
   label?: string;
+}
+
+/** Things Transfer can copy off a phone as ordinary files. */
+export type TransferItemId =
+  | 'photos'
+  | 'videos'
+  | 'music'
+  | 'documents'
+  | 'downloads'
+  | 'whatsapp'
+  | 'apps'
+  | 'contacts'
+  | 'calls'
+  | 'messages'
+  | 'notes'
+  | 'voicememos';
+
+export interface TransferRequest {
+  deviceId: string;
+  items: TransferItemId[];
 }
 
 export interface RestoreRequest {

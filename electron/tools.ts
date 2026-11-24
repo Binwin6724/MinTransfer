@@ -11,7 +11,8 @@ import type { ToolId, ToolStatus } from '../shared/types';
 const EXE = process.platform === 'win32' ? '.exe' : '';
 export const IOS_TOOLS = ['idevice_id', 'ideviceinfo', 'idevicepair', 'idevicebackup2'] as const;
 /** Present in libimobiledevice builds but not required for the core features. */
-export const IOS_OPTIONAL_TOOLS = ['ideviceenterrecovery'] as const;
+/** Optional: recovery mode, and MinTransfer's own helper for files and apps (native/mt-ios.c). */
+export const IOS_OPTIONAL_TOOLS = ['ideviceenterrecovery', 'mt-ios'] as const;
 export type IosTool = (typeof IOS_TOOLS)[number] | (typeof IOS_OPTIONAL_TOOLS)[number];
 /** Microsoft Store page of Apple Devices, which installs Apple's USB driver on Windows. */
 export const APPLE_DEVICES_STORE = 'ms-windows-store://pdp/?ProductId=9NP83LWLPZ9K';
