@@ -25,6 +25,19 @@ describe('libimobiledevice parsers', () => {
   it('explains backup failures', () => {
     expect(explainBackupError('ERROR: Restore Failed (Error Code 211): Find My iPhone is enabled')).toMatch(/Find My/);
     expect(explainBackupError('ERROR: something odd happened')).toBe('something odd happened');
+    // Error 105 comes after a "waiting for passcode" line; the space problem must win.
+    const log105 = [
+      'Backup directory is "/Users/someone/Documents/MinTransfer/iPhone/Information/.mt-backup"',
+      'Started "com.apple.mobilebackup2" service on port 64229.',
+      'Full backup mode.',
+      '*** Waiting for passcode to be entered on the device ***',
+      'ErrorCode 105: Insufficient free disk space on drive to back up (MBErrorDomain/105)',
+      'Received 0 files from device.',
+      'Backup Failed (Error Code 105).',
+    ].join('\n');
+    expect(explainBackupError(log105)).toMatch(/Not enough free space on this computer/);
+    expect(explainBackupError('*** Waiting for passcode to be entered on the device ***\nERROR: Device is locked')).toMatch(/Unlock the iPhone/);
+    expect(explainBackupError('*** Waiting for passcode to be entered on the device ***')).toMatch(/Unlock the iPhone/);
   });
   it('names models', () => {
     expect(appleModelName('iPhone16,2')).toBe('iPhone 15 Pro Max');

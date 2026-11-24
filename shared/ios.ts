@@ -81,21 +81,24 @@ export function parseBackupProgress(line: string): number | null {
 
 /** Turns idevicebackup2 failure text into a sentence a person can act on. */
 export function explainBackupError(text: string): string {
-  const t = text.toLowerCase();
-  if (t.includes('find my') || t.includes('findmy') || t.includes('find my iphone'))
-    return 'Turn off Find My on the iPhone (Settings ▸ your name ▸ Find My) and try again.';
-  if (t.includes('wrong password') || t.includes('password') && t.includes('incorrect'))
-    return 'The backup password is wrong.';
-  if (t.includes('no space') || t.includes('not enough') || t.includes('enospc'))
-    return 'There is not enough free space for this operation.';
-  if (t.includes('passcode') || t.includes('locked')) return 'Unlock the iPhone and keep it unlocked until the operation starts.';
-  if (t.includes('could not connect') || t.includes('no device found')) return 'The iPhone disconnected. Reconnect it and try again.';
-  if (t.includes('encrypt') && t.includes('password')) return 'This backup is encrypted. Enter its password.';
-  const err = text
-    .split(/\r?\n/)
-    .reverse()
-    .find((l) => /error/i.test(l));
-  return err?.replace(/^ERROR:\s*/i, '').trim() || 'The iPhone reported an error. See the activity log for details.';
+  // Judge by the actual error lines first. idevicebackup2 also prints progress such as
+  // "*** Waiting for passcode to be entered on the device ***" before failing for another reason.
+  const errorLines = text.split(/\r?\n/).filter((l) => /ErrorCode \d+|^\s*ERROR|error:|failed \(/i.test(l) && !/^Backup Failed|^Restore Failed/i.test(l.trim()));
+  const classify = (t: string): string | null => {
+    t = t.toLowerCase();
+    if (/errorcode 105\b|insufficient free disk space|no space|not enough (free )?space|enospc/.test(t))
+      return 'Not enough free space on this computer for the iPhone backup. It needs about as much free space as the iPhone uses. Free up space, or choose a folder on a bigger drive (Settings ▸ Backup folder, or Transfer ▸ Change…).';
+    if (t.includes('find my')) return 'Turn off Find My on the iPhone (Settings ▸ your name ▸ Find My) and try again.';
+    if (t.includes('wrong password') || (t.includes('password') && t.includes('incorrect'))) return 'The backup password is wrong.';
+    if (t.includes('encrypt') && t.includes('password')) return 'This backup is encrypted. Enter its password.';
+    if (/could not connect|no device found|device disconnected|lost connection/.test(t)) return 'The iPhone disconnected. Reconnect it and try again.';
+    if (/passcode|device is locked|locked/.test(t)) return 'Unlock the iPhone and keep it unlocked until the operation starts.';
+    return null;
+  };
+  const fromErrors = errorLines.length ? classify(errorLines.join('\n')) : null;
+  if (fromErrors) return fromErrors;
+  if (errorLines.length) return errorLines[errorLines.length - 1].replace(/^\s*ERROR:\s*/i, '').trim();
+  return classify(text) ?? 'The iPhone reported an error. See the activity log for details.';
 }
 
 const MODELS: Record<string, string> = {
