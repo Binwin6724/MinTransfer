@@ -1,7 +1,7 @@
 {
   "name": "mintransfer",
   "productName": "MinTransfer",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Back up, restore, recover and erase iPhone and Android phones from macOS and Windows. Local, open source, no accounts.",
   "author": "Binwin Viju",
   "license": "MIT",
