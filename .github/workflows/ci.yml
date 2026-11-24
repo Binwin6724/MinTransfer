@@ -4,6 +4,7 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,9 +15,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
-            dist: dist:mac
-          - os: windows-latest
+          - name: mac-arm64
+            os: macos-15
+            dist: dist:mac-arm64
+          - name: mac-x64
+            os: macos-15-intel
+            dist: dist:mac-x64
+          - name: win-x64
+            os: windows-latest
             dist: dist:win
     runs-on: ${{ matrix.os }}
     steps:
@@ -30,24 +36,75 @@ jobs:
         run: npm test
       - name: Typecheck
         run: npm run typecheck
+
+      # Bundle libimobiledevice (iPhone support) into the installer.
+      - name: Bundle iPhone tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install libimobiledevice dylibbundler
+          bash scripts/bundle-ios-tools-mac.sh
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-libimobiledevice
+      - name: Bundle iPhone tools (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/bundle-ios-tools-win.sh
+
       - name: Package
         run: npm run ${{ matrix.dist }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MinTransfer-${{ runner.os }}
-          path: |
-            release/*.dmg
-            release/*.exe
-          if-no-files-found: error
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check the installer contains the iPhone tools
         shell: bash
         run: |
-          for f in release/*.dmg release/*-setup.exe; do
-            [ -f "$f" ] || continue
-            gh release upload "${GITHUB_REF_NAME}" "$f" --clobber || gh release create "${GITHUB_REF_NAME}" "$f" --title "MinTransfer ${GITHUB_REF_NAME#v}" --notes "See the README for installation notes."
-          done
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            test -f release/win-unpacked/resources/tools/libimobiledevice/idevicebackup2.exe
+            release/win-unpacked/resources/tools/libimobiledevice/idevice_id.exe -l || true
+          else
+            app=$(ls -d release/mac*/MinTransfer.app | head -1)
+            "$app/Contents/Resources/tools/libimobiledevice/idevicebackup2" --version
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MinTransfer-${{ matrix.name }}
+          path: |
+            release/*.dmg
+            release/*-setup.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          notes="Download the installer for your computer:
+
+          | Computer | File |
+          |---|---|
+          | Mac with Apple silicon (M1–M5) | \`MinTransfer-${GITHUB_REF_NAME#v}-mac-arm64.dmg\` |
+          | Mac with Intel processor | \`MinTransfer-${GITHUB_REF_NAME#v}-mac-x64.dmg\` |
+          | Windows 10 / 11 (64-bit) | \`MinTransfer-${GITHUB_REF_NAME#v}-win-x64-setup.exe\` |
+
+          iPhone tools are included. Android tools are downloaded from Google automatically on first launch.
+          **macOS first launch:** right-click MinTransfer ▸ Open (the app is not notarized yet).
+          **Windows:** SmartScreen may warn because the installer isn't code-signed: More info ▸ Run anyway. For iPhones, also install Apple Devices from the Microsoft Store.
+
+          See the [README](https://github.com/${GITHUB_REPOSITORY}#readme) for details."
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "MinTransfer ${GITHUB_REF_NAME#v}" --notes "$notes"
+          fi

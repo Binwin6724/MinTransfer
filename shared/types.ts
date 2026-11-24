@@ -47,6 +47,8 @@ export interface ToolStatus {
   /** Executables of the suite that could not be found. */
   missing: string[];
   installHint: string;
+  /** Found, but something else the tool depends on is missing (e.g. Apple's USB driver on Windows). */
+  warning?: string;
 }
 
 export type JobKind = 'backup' | 'restore' | 'recover' | 'erase' | 'extract' | 'scan' | 'tools';
@@ -157,6 +159,8 @@ export interface AppSettings {
   customToolDir: string;
   /** Poll interval for device discovery in ms. */
   pollMs: number;
+  /** Download Android Platform-Tools automatically when they are missing (accepted in the installer). */
+  autoSetupAndroid: boolean;
 }
 
 export interface AppState {

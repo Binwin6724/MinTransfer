@@ -8,11 +8,11 @@ API exposed by `electron/preload.ts`, and the main process does all device and f
 | File | Role |
 |---|---|
 | `main.ts` | Window, IPC handlers, device polling loop (every 2 s), state broadcast, power-save blocker while jobs run. |
-| `tools.ts` | Finds `adb` and libimobiledevice (custom folder → downloaded → bundled → Android SDK / Homebrew → `PATH`) and downloads Google's Platform-Tools. |
+| `tools.ts` | Finds `adb` and libimobiledevice (custom folder → downloaded → bundled in the installer → Android SDK / Homebrew → `PATH`), downloads Google’s Platform-Tools (automatically on first launch), and checks Apple’s USB driver on Windows. |
 | `exec.ts` | Spawns tools **without a shell**, with timeouts, cancellation (kills the process tree on Windows) and line callbacks for progress. |
 | `jobs.ts` | Job runner: one running job per phone, progress / detail / log, cancel, throttled updates to the UI. |
 | `android.ts` | adb device discovery and info, category backups (`adb pull -a`), apps (`pm path` + split APKs), contacts / calls / SMS via `content query`, restore (`push --sync`, `install-multiple`), trash scan and erase. |
-| `ios.ts` | `idevice_id`/`ideviceinfo` discovery, pairing, `idevicebackup2` backup / restore / encryption / erase. Passwords go through `BACKUP_PASSWORD*` environment variables, never the command line. |
+| `ios.ts` | `idevice_id`/`ideviceinfo` discovery, pairing, `idevicebackup2` backup / restore / encryption, `ideviceenterrecovery` for factory restores. Passwords go through `BACKUP_PASSWORD*` environment variables, never the command line. |
 | `iosBackup.ts` | Opens `Manifest.db` with sql.js (WebAssembly SQLite) and extracts groups from the app databases inside the backup. |
 | `library.ts` | Lists MinTransfer backups (`mintransfer.json`) and Finder / iTunes backups (`Info.plist`), browsing and extraction, safe deletion. |
 

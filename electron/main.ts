@@ -9,7 +9,7 @@ import { JobContext, JobRunner } from './jobs';
 import { Library } from './library';
 import { log } from './logger';
 import { JsonStore } from './store';
-import { PLATFORM_TOOLS_TERMS, Tools } from './tools';
+import { APPLE_DEVICES_STORE, PLATFORM_TOOLS_TERMS, Tools } from './tools';
 import { backupFolderName, formatBytes } from '../shared/export';
 import type { AppSettings, AppState, JobKind, BackupRequest, EraseRequest, ExtractRequest, PhoneDevice, RestoreRequest, TrashItem } from '../shared/types';
 
@@ -51,6 +51,7 @@ function defaultSettings(): AppSettings {
     showSystemBackups: true,
     customToolDir: '',
     pollMs: 2000,
+    autoSetupAndroid: true,
   };
 }
 
@@ -238,7 +239,7 @@ function registerIpc() {
     const d = device(req.deviceId);
     if (req.confirmation !== ERASE_PHRASE) throw new Error(`Type ${ERASE_PHRASE} to confirm.`);
     const job = jobs.start('erase', `Erase ${d.name}`, d.id, async (ctx) => {
-      if (d.platform === 'ios') await ios.erase(ctx, d.id);
+      if (d.platform === 'ios') await ios.enterRecovery(ctx, d.id);
       else await android.erase(ctx, d.id, req.android ?? { wipeFolders: [], uninstallApps: false, rebootToRecovery: false });
     });
     return job.id;
@@ -309,7 +310,7 @@ function registerIpc() {
   );
 
   handle('settings:set', async (patch: Partial<AppSettings>) => {
-    const allowed: (keyof AppSettings)[] = ['theme', 'backupDir', 'showSystemBackups', 'customToolDir', 'pollMs'];
+    const allowed: (keyof AppSettings)[] = ['theme', 'backupDir', 'showSystemBackups', 'customToolDir', 'pollMs', 'autoSetupAndroid'];
     const clean: Partial<AppSettings> = {};
     for (const k of allowed) if (k in patch) (clean as Record<string, unknown>)[k] = patch[k];
     store.set({ settings: { ...settings(), ...clean } });
@@ -336,7 +337,25 @@ function registerIpc() {
     return shell.openExternal(url);
   });
   handle('app:openLogs', () => log.path && shell.showItemInFolder(log.path));
+  handle('app:openAppleDevicesStore', () => shell.openExternal(APPLE_DEVICES_STORE));
   handle('app:openFullDiskAccess', () => shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'));
+}
+
+/** First launch (or tools deleted): fetch Google's Platform-Tools without the user having to ask. */
+function autoSetupAndroid() {
+  if (tools.paths.adb || !settings().autoSetupAndroid || captureDir) return;
+  log.info('Android tools missing; setting them up automatically');
+  try {
+    jobs.start('tools', 'Set up Android tools', undefined, async (ctx) => {
+      ctx.log(`Downloading Android SDK Platform-Tools from Google. License: ${PLATFORM_TOOLS_TERMS}`);
+      const adb = await tools.downloadPlatformTools((f, d) => ctx.progress(f, d), ctx.signal);
+      startPolling();
+      ctx.progress(1, 'Android tools are ready');
+      return path.dirname(adb);
+    });
+  } catch (err) {
+    log.warn('auto setup failed to start', err);
+  }
 }
 
 // ---------------------------------------------------------------- screenshots (README)
@@ -384,6 +403,7 @@ app.whenReady().then(async () => {
   library.scan();
   createWindow();
   startPolling();
+  autoSetupAndroid();
   if (captureDir) mainWindow?.webContents.once('did-finish-load', () => captureScreenshots(path.resolve(captureDir)));
 });
 

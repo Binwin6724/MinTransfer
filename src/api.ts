@@ -28,6 +28,7 @@ export interface MintransferApi {
   openExternal(url: string): Promise<void>;
   openLogs(): Promise<void>;
   openFullDiskAccess(): Promise<void>;
+  openAppleDevicesStore(): Promise<void>;
   onState(cb: (s: AppState) => void): () => void;
   onCapture(cb: (p: { route: string; theme: string }) => void): () => void;
 }

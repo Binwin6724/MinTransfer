@@ -138,7 +138,7 @@ export function App() {
             <a key={t.id} href="#/settings" className="tool-status" title={t.found ? t.path : t.installHint}>
               <span className={`dot ${t.found ? 'ok' : 'missing'}`} />
               {t.id === 'adb' ? 'Android tools' : 'iPhone tools'}
-              <span className="muted">{t.found ? (t.version ?? 'ready') : 'missing'}</span>
+              <span className="muted">{t.found ? (t.version?.split('-')[0] ?? 'ready') : 'missing'}</span>
             </a>
           ))}
           <div className="version">v{state.version}</div>

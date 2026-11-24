@@ -1,0 +1,36 @@
+MinTransfer — License and third-party terms
+===========================================
+
+MinTransfer is free and open-source software under the MIT License.
+Copyright (c) 2026 Binwin Viju. https://github.com/Binwin6724/MinTransfer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. ALWAYS KEEP A BACKUP BEFORE RESTORING OR
+ERASING A PHONE.
+
+Included helper tools
+---------------------
+MinTransfer includes the command-line tools of libimobiledevice (idevice_id,
+ideviceinfo, idevicepair, idevicebackup2, ideviceenterrecovery) and the libraries they
+use (libplist, libusbmuxd, libimobiledevice-glue, OpenSSL). libimobiledevice and its
+companion libraries are licensed under the GNU LGPL 2.1 or later; OpenSSL under the
+Apache License 2.0. Source code: https://libimobiledevice.org/ and
+https://github.com/libimobiledevice. License texts are installed in the "tools"
+folder of the application.
+
+Android SDK Platform-Tools (downloaded on first launch)
+------------------------------------------------------
+To work with Android phones, MinTransfer automatically downloads Google's Android SDK
+Platform-Tools (adb) from https://dl.google.com the first time it starts. By
+installing MinTransfer you agree to the Android Software Development Kit License
+Agreement: https://developer.android.com/studio/terms
+You can turn the automatic download off in Settings and install adb yourself.
+
+iPhone on Windows
+-----------------
+Windows needs Apple's USB driver to talk to an iPhone. Install the free "Apple Devices"
+app (or iTunes) from the Microsoft Store. It is not included with MinTransfer.
+
+MinTransfer is not affiliated with or endorsed by Apple Inc. or Google LLC.
+iPhone and iPad are trademarks of Apple Inc. Android is a trademark of Google LLC.

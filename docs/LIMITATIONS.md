@@ -8,9 +8,11 @@
   Contacts) is not on the phone and therefore not in a local backup.
 
 ## iPhone / iPad
-* Requires libimobiledevice. On Windows it also needs Apple's USB driver (Apple Devices app or iTunes).
+* libimobiledevice ships inside the installer. On Windows, Apple's USB driver (Apple Devices app or iTunes) is still needed.
+* Apple doesn't let computers start "Erase All Content and Settings" over USB. MinTransfer guides the on-phone erase,
+  or restarts the iPhone into recovery mode so Finder / Apple Devices can factory-restore it.
 * Encrypted backups can be made and restored but not yet browsed in Recover.
-* Restore requires **Find My** to be off. Erase leaves Activation Lock in place if Find My is on.
+* Restore requires **Find My** to be off. Erasing leaves Activation Lock in place if Find My is on.
 * Backups from iOS 9 and earlier (`Manifest.mbdb`) can be restored but not browsed.
 
 ## Android

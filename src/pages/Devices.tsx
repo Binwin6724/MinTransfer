@@ -9,6 +9,7 @@ export function Devices({ state, select }: PageProps) {
   const adb = state.tools.find((t) => t.id === 'adb');
   const imd = state.tools.find((t) => t.id === 'libimobiledevice');
   const running = state.jobs.filter((j) => j.status === 'running');
+  const settingUp = running.some((j) => j.kind === 'tools');
   const go = (d: PhoneDevice, route: string) => {
     select(d.id);
     navigate(route);
@@ -22,7 +23,20 @@ export function Devices({ state, select }: PageProps) {
         </button>
       </PageHeader>
 
-      {(!adb?.found || !imd?.found) && (
+      {imd?.found && imd.warning && (
+        <Banner
+          kind="warn"
+          action={
+            <button className="btn" onClick={() => run(api.openAppleDevicesStore())}>
+              Get Apple Devices
+            </button>
+          }
+        >
+          <b>iPhones need Apple’s USB driver.</b> {imd.warning}
+        </Banner>
+      )}
+
+      {!settingUp && (!adb?.found || !imd?.found) && (
         <Banner
           kind="info"
           action={
@@ -37,7 +51,7 @@ export function Devices({ state, select }: PageProps) {
             </>
           ) : !adb?.found ? (
             <>
-              <b>Android tools are missing.</b> One click in Settings downloads Google’s official Platform-Tools.
+              <b>Android tools are missing.</b> MinTransfer downloads Google’s Platform-Tools automatically when you’re online, or from Settings.
             </>
           ) : (
             <>

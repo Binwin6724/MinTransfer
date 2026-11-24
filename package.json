@@ -16,8 +16,11 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "icons": "swift scripts/make-icons.swift build",
-    "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never",
-    "dist:win": "npm run build && electron-builder --win --x64 --publish never"
+    "dist:mac": "npm run build && electron-builder --mac --arm64 --x64 --publish never",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "bundle:ios-tools": "bash scripts/bundle-ios-tools-mac.sh",
+    "dist:mac-arm64": "npm run build && electron-builder --mac --arm64 --publish never",
+    "dist:mac-x64": "npm run build && electron-builder --mac --x64 --publish never"
   },
   "dependencies": {
     "plist": "^3.1.0",
@@ -42,7 +45,7 @@
   "build": {
     "appId": "com.mintransfer.app",
     "productName": "MinTransfer",
-    "copyright": "Copyright © 2026 Binwin Viju",
+    "copyright": "Copyright \u00a9 2026 Binwin Viju",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -94,7 +97,21 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "MinTransfer",
-      "uninstallDisplayName": "MinTransfer"
-    }
+      "uninstallDisplayName": "MinTransfer",
+      "license": "build/license.txt"
+    },
+    "extraResources": [
+      {
+        "from": "vendor/tools",
+        "to": "tools",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
+    ]
   }
 }

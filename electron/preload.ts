@@ -41,6 +41,7 @@ const api = {
   openExternal: (url: string) => call('app:openExternal', url),
   openLogs: () => call('app:openLogs'),
   openFullDiskAccess: () => call('app:openFullDiskAccess'),
+  openAppleDevicesStore: () => call('app:openAppleDevicesStore'),
   onState: (cb: (s: unknown) => void) => on('state', cb),
   onCapture: (cb: (p: unknown) => void) => on('capture', cb),
 };

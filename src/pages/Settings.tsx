@@ -21,10 +21,13 @@ export function Settings({ state }: PageProps) {
             <div className="tool-text">
               <b>{t.label}</b>
               {t.found ? (
-                <small className="mono">
-                  {t.version ? `v${t.version} · ` : ''}
-                  {t.source} · {t.path}
-                </small>
+                <>
+                  <small className="mono">
+                    {t.version ? `v${t.version} · ` : ''}
+                    {t.source === 'bundled' ? 'included with MinTransfer' : t.source} · {t.path}
+                  </small>
+                  {t.warning && <small className="warn-text">{t.warning}</small>}
+                </>
               ) : (
                 <small>
                   {t.missing.length > 0 && t.id === 'libimobiledevice' && `Missing: ${t.missing.join(', ')}. `}
@@ -44,6 +47,11 @@ export function Settings({ state }: PageProps) {
             )}
             {t.id === 'libimobiledevice' && (
               <div className="tool-actions">
+                {t.warning && state.platform === 'win32' && (
+                  <button className="btn small" onClick={() => run(api.openAppleDevicesStore())}>
+                    Get Apple Devices
+                  </button>
+                )}
                 <a className="btn small" href={LIBIMOBILEDEVICE} target="_blank" rel="noreferrer">
                   Website <Icon name="external" size={12} />
                 </a>
@@ -51,10 +59,13 @@ export function Settings({ state }: PageProps) {
             )}
           </div>
         ))}
-        {state.platform === 'darwin' && !state.tools.find((t) => t.id === 'libimobiledevice')?.found && (
-          <pre className="code">brew install libimobiledevice</pre>
-        )}
-        <p className="muted small">By downloading Platform-Tools you accept Google’s Android SDK license. Tools are stored in MinTransfer’s own data folder.</p>
+        <div className="setting-row">
+          <div>
+            <b>Set up Android tools automatically</b>
+            <small>When Platform-Tools are missing, MinTransfer downloads them from Google on launch (you accepted Google’s Android SDK license in the installer).</small>
+          </div>
+          <Toggle on={s.autoSetupAndroid} onChange={(v) => run(api.setSettings({ autoSetupAndroid: v }))} />
+        </div>
         {toolJob && <JobCard job={toolJob} compact />}
         <div className="setting-row">
           <div>

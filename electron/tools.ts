@@ -10,7 +10,11 @@ import type { ToolId, ToolStatus } from '../shared/types';
 
 const EXE = process.platform === 'win32' ? '.exe' : '';
 export const IOS_TOOLS = ['idevice_id', 'ideviceinfo', 'idevicepair', 'idevicebackup2'] as const;
-export type IosTool = (typeof IOS_TOOLS)[number];
+/** Present in libimobiledevice builds but not required for the core features. */
+export const IOS_OPTIONAL_TOOLS = ['ideviceenterrecovery'] as const;
+export type IosTool = (typeof IOS_TOOLS)[number] | (typeof IOS_OPTIONAL_TOOLS)[number];
+/** Microsoft Store page of Apple Devices, which installs Apple's USB driver on Windows. */
+export const APPLE_DEVICES_STORE = 'ms-windows-store://pdp/?ProductId=9NP83LWLPZ9K';
 
 export const PLATFORM_TOOLS_TERMS = 'https://developer.android.com/studio/releases/platform-tools';
 export function platformToolsUrl(): string {
@@ -94,6 +98,15 @@ export class Tools {
         iosSource ??= hit.source;
       } else missing.push(t);
     }
+    for (const t of IOS_OPTIONAL_TOOLS) {
+      const hit = this.locate('libimobiledevice', t);
+      if (hit) ios[t] = hit.file;
+    }
+    // On Windows the iPhone USB connection is provided by Apple's own service.
+    let iosWarning: string | undefined;
+    if (process.platform === 'win32' && !(await appleMobileDeviceServicePresent())) {
+      iosWarning = 'Apple’s USB driver is not installed. Install the free Apple Devices app (or iTunes) from the Microsoft Store, then reconnect the iPhone.';
+    }
     let iosVersion: string | undefined;
     if (ios.ideviceinfo) {
       try {
@@ -113,7 +126,7 @@ export class Tools {
         version: adbVersion,
         source: adb?.source,
         missing: adb ? [] : ['adb'],
-        installHint: 'MinTransfer can download Google’s official Platform-Tools for you, or point it at an existing Android SDK.',
+        installHint: 'MinTransfer sets these up automatically on first launch. You can also download them again here, or point MinTransfer at an existing Android SDK.',
       },
       {
         id: 'libimobiledevice',
@@ -123,12 +136,10 @@ export class Tools {
         version: iosVersion,
         source: iosSource,
         missing,
+        warning: iosWarning,
         installHint:
-          process.platform === 'darwin'
-            ? 'Install with Homebrew: brew install libimobiledevice'
-            : process.platform === 'win32'
-              ? 'Install the Apple Devices app (or iTunes) for the USB driver, then download a libimobiledevice build for Windows and choose its folder in Settings.'
-              : 'Install the libimobiledevice-utils package and usbmuxd.',
+          'These ship inside the MinTransfer installer. If they are missing, reinstall MinTransfer' +
+          (process.platform === 'darwin' ? ' or run: brew install libimobiledevice' : process.platform === 'win32' ? ' or choose a libimobiledevice folder below.' : ' or install libimobiledevice-utils.'),
       },
     ];
     return this.status;
@@ -170,5 +181,14 @@ export class Tools {
     if (process.platform !== 'win32') fs.chmodSync(adb, 0o755);
     await this.refresh();
     return adb;
+  }
+}
+
+async function appleMobileDeviceServicePresent(): Promise<boolean> {
+  try {
+    const r = await run('sc.exe', ['query', 'Apple Mobile Device Service'], { timeoutMs: 8000 });
+    return r.code === 0;
+  } catch {
+    return true; // can't tell; don't nag
   }
 }

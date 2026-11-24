@@ -212,7 +212,7 @@ export class IosService {
     const args = ['-u', udid, 'restore'];
     if (opts.system) args.push('--system');
     if (opts.settings) args.push('--settings');
-    if (opts.reboot) args.push('--reboot');
+    if (!opts.reboot) args.push('--no-reboot');
     if (opts.copy) args.push('--copy');
     args.push('--source', sourceFolder, parent);
     ctx.progress(null, 'Keep the iPhone unlocked and connected. Starting restore…');
@@ -224,13 +224,25 @@ export class IosService {
 
   // ---------------------------------------------------------------- erase
 
-  async erase(ctx: JobContext, udid: string): Promise<void> {
-    ctx.progress(null, 'Sending erase request… keep the iPhone connected and unlocked.');
-    const r = await this.backup2(ctx, ['-u', udid, 'erase']);
-    if (r.code !== 0 || /ERROR|failed/i.test(r.all)) throw new Error(explainBackupError(r.all));
+  /**
+   * libimobiledevice has no "Erase All Content and Settings" command, so MinTransfer offers the
+   * Apple-supported routes: erase on the phone itself, or put it in recovery mode for a factory
+   * restore with Finder / Apple Devices / iTunes.
+   */
+  async enterRecovery(ctx: JobContext, udid: string): Promise<void> {
+    ctx.progress(null, 'Restarting the iPhone into recovery mode…');
+    const r = await this.exec('ideviceenterrecovery', [udid], { timeoutMs: 60000, signal: ctx.signal });
+    ctx.log(r.all.trim());
+    if (r.code !== 0) throw new Error(explainBackupError(r.all));
     this.invalidate(udid);
-    ctx.progress(1, 'The iPhone is erasing all content and settings. It restarts to the Hello screen when done.');
+    ctx.progress(
+      1,
+      process.platform === 'darwin'
+        ? 'The iPhone is in recovery mode. Open Finder, select it and choose Restore to erase it and reinstall iOS.'
+        : 'The iPhone is in recovery mode. Open Apple Devices (or iTunes), select it and choose Restore to erase it and reinstall iOS.',
+    );
   }
+
 }
 
 function osName(deviceClass?: string) {

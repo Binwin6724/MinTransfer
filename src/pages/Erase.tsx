@@ -62,15 +62,20 @@ export function Erase({ state, selected, select }: PageProps) {
           )}
 
           {device.platform === 'ios' ? (
-            <Card title="Erase all content and settings" icon="erase">
-              <p>
-                The iPhone deletes every app, photo, message and setting and restarts to the Hello screen, exactly like <b>Settings ▸ General ▸ Transfer or Reset
-                iPhone ▸ Erase All Content and Settings</b>. Modern iPhones do this instantly by destroying their encryption keys, so the old data cannot be
-                recovered by anyone.
-              </p>
+            <Card title="Erase an iPhone" icon="erase">
               <Banner kind="warn">
-                If <b>Find My</b> is on, the iPhone stays locked to the Apple Account (Activation Lock). Sign out of iCloud on the phone before selling it.
+                Sign out of iCloud (Settings ▸ your name ▸ Sign Out) first. Otherwise the iPhone stays locked to your Apple Account (Activation Lock) after it is erased.
               </Banner>
+              <h4>Option 1 · On the iPhone (recommended)</h4>
+              <p>
+                Open <b>Settings ▸ General ▸ Transfer or Reset iPhone ▸ Erase All Content and Settings</b>. The iPhone destroys its encryption keys, so the old data
+                can’t be recovered by anyone, then restarts to the Hello screen. Apple doesn’t let computers start this erase over USB.
+              </p>
+              <h4>Option 2 · Factory restore from this computer</h4>
+              <p>
+                Use this if you can’t use the iPhone’s screen. MinTransfer restarts it into <b>recovery mode</b>; then{' '}
+                {state.platform === 'darwin' ? 'Finder' : 'Apple Devices (or iTunes)'} shows a <b>Restore</b> button that erases the iPhone and installs a fresh copy of iOS.
+              </p>
             </Card>
           ) : (
             <Card title="What to erase" icon="erase">
@@ -99,7 +104,7 @@ export function Erase({ state, selected, select }: PageProps) {
 
           <Card title="Confirm" icon="warning" className="danger-card">
             <label className="inline-label">
-              Type <b className="mono">{PHRASE}</b> to erase {device.name}
+              Type <b className="mono">{PHRASE}</b> to {device.platform === 'ios' ? 'continue' : `erase ${device.name}`}
               <input value={typed} onChange={(e) => setTyped(e.target.value.toUpperCase())} placeholder={PHRASE} disabled={busy} spellCheck={false} />
             </label>
           </Card>
@@ -107,7 +112,7 @@ export function Erase({ state, selected, select }: PageProps) {
           <div className="cta-row">
             {job && <JobCard job={job} />}
             <button className="btn danger large" disabled={busy || typed !== PHRASE || nothing} onClick={start}>
-              <Icon name="erase" size={17} /> {busy ? 'Erasing…' : `Erase ${device.name}`}
+              <Icon name="erase" size={17} /> {busy ? 'Working…' : device.platform === 'ios' ? `Put ${device.name} into recovery mode` : `Erase ${device.name}`}
             </button>
           </div>
         </>
