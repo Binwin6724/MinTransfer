@@ -101,7 +101,12 @@ export interface CategoryResult {
   bytes: number;
   /** Non-fatal problem, e.g. "permission denied by Android". */
   warning?: string;
+  /** Files / folders (relative to the backup folder) that hold this category's export. */
+  paths?: string[];
 }
+
+/** What an iPhone "choose items" backup can save. */
+export type IosItemId = 'images' | 'videos' | 'contacts' | 'messages' | 'calls' | 'notes' | 'voicememos' | 'whatsapp';
 
 export interface BackupRecord {
   id: string;
@@ -122,6 +127,11 @@ export interface BackupRecord {
   encrypted: boolean;
   complete: boolean;
   note?: string;
+  /**
+   * iOS only. "full" (default) = a restorable device backup; "items" = only the chosen
+   * items, exported as ordinary files (photos, .vcf, .csv…). Items backups can't be restored with Restore.
+   */
+  kind?: 'full' | 'items';
 }
 
 /** One logical item group inside a backup that can be extracted. */
@@ -179,8 +189,12 @@ export interface BackupRequest {
   deviceId: string;
   /** Android categories; ignored for iOS. */
   categories: AndroidCategoryId[];
-  /** iOS: password to turn encryption on before the backup (optional). */
+  /** iOS: password to turn encryption on before the backup (optional, full backups only). */
   encryptPassword?: string;
+  /** iOS: save only these items as files instead of a full device backup. */
+  iosItems?: IosItemId[];
+  /** iOS items backup: also keep the full device backup it was made from. */
+  keepFull?: boolean;
   label?: string;
 }
 

@@ -37,3 +37,14 @@ describe('libimobiledevice parsers', () => {
     expect(new Date(appleTime(725760000 * 1e9)).toISOString()).toBe('2024-01-01T00:00:00.000Z');
   });
 });
+
+describe('mediaKind', () => {
+  it('sorts camera roll files', async () => {
+    const { mediaKind } = await import('../shared/ios');
+    expect(mediaKind('IMG_0001.HEIC')).toBe('image');
+    expect(mediaKind('IMG_0002.jpg')).toBe('image');
+    expect(mediaKind('IMG_0003.MOV')).toBe('video');
+    expect(mediaKind('IMG_0004.mp4')).toBe('video');
+    expect(mediaKind('IMG_0001.AAE')).toBeNull();
+  });
+});

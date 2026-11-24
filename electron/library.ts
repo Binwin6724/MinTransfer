@@ -10,7 +10,7 @@ import type { JobContext } from './jobs';
 import { log } from './logger';
 import { readPlistFile } from './plist';
 import { categoryById } from '../shared/android';
-import { appleModelName } from '../shared/ios';
+import { appleModelName, IOS_ITEMS } from '../shared/ios';
 import type { BackupRecord, RecoverGroup } from '../shared/types';
 
 export function systemBackupDirs(): string[] {
@@ -48,7 +48,7 @@ export class Library {
         // The folder may have been moved or renamed since it was written.
         rec.id = `mt:${e.name}`;
         rec.path = folder;
-        if (rec.platform === 'ios') rec.dataPath = path.join(folder, rec.deviceId);
+        if (rec.platform === 'ios' && rec.kind !== 'items') rec.dataPath = path.join(folder, rec.deviceId);
         else rec.dataPath = folder;
         list.push(rec);
       }
@@ -129,6 +129,18 @@ export class Library {
 
   async groups(id: string): Promise<RecoverGroup[]> {
     const rec = this.get(id);
+    if (rec.kind === 'items') {
+      return rec.categories.map((c) => ({
+        id: c.id,
+        label: c.label,
+        description: IOS_ITEMS.find((x) => x.id === c.id)?.description ?? '',
+        count: c.files,
+        bytes: c.bytes,
+        format: 'files',
+        available: c.files > 0,
+        reason: c.files > 0 ? undefined : (c.warning ?? 'Empty'),
+      }));
+    }
     if (rec.platform === 'ios') {
       const reader = await IosBackupReader.open(rec.dataPath);
       try {
@@ -156,7 +168,17 @@ export class Library {
     const rec = this.get(id);
     const out = path.join(dest, `${rec.deviceName.replace(/[<>:"/\\|?*]/g, '_')} - recovered ${new Date().toISOString().slice(0, 10)}`);
     fs.mkdirSync(out, { recursive: true });
-    if (rec.platform === 'ios') {
+    if (rec.kind === 'items') {
+      for (let i = 0; i < groups.length; i++) {
+        ctx.check();
+        const c = rec.categories.find((x) => x.id === groups[i]);
+        ctx.progress(i / groups.length, `Copying ${c?.label ?? groups[i]}…`);
+        for (const p of c?.paths ?? []) {
+          const src = path.join(rec.path, p);
+          if (fs.existsSync(src)) fs.cpSync(src, path.join(out, p), { recursive: true });
+        }
+      }
+    } else if (rec.platform === 'ios') {
       const reader = await IosBackupReader.open(rec.dataPath);
       try {
         for (let i = 0; i < groups.length; i++) {

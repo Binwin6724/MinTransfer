@@ -299,3 +299,13 @@ input:focus, .select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px 
 @media (max-width: 1180px) {
   .grid.two { grid-template-columns: 1fr; }
 }
+
+/* Select all / clear links and small layout helpers */
+.select-links { display: inline-flex; gap: 10px; margin-left: 12px; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent-a); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; }
+button.link:hover:not(:disabled) { text-decoration: underline; }
+button.link:disabled { opacity: 0.4; cursor: default; }
+.row-between { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 10px; }
+.row-between p { margin: 0; }
+.nowrap { white-space: nowrap; }
+.segmented button:disabled { opacity: 0.45; cursor: default; }

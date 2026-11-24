@@ -1,5 +1,27 @@
 // iOS: parsers for libimobiledevice output and Apple model names. Pure functions, unit-tested.
-import type { ConnectionState } from './types';
+import type { ConnectionState, IosItemId } from './types';
+
+/** Items an iPhone backup can save as plain files. */
+export const IOS_ITEMS: { id: IosItemId; label: string; description: string }[] = [
+  { id: 'images', label: 'Photos', description: 'Camera roll photos and screenshots, original quality (HEIC / JPG / PNG).' },
+  { id: 'videos', label: 'Videos', description: 'Camera roll videos (MOV / MP4).' },
+  { id: 'contacts', label: 'Contacts', description: 'A vCard (.vcf) for any phone or address book, plus a CSV.' },
+  { id: 'messages', label: 'Messages', description: 'SMS and iMessage as CSV and one readable transcript per chat, with attachments.' },
+  { id: 'calls', label: 'Call history', description: 'Phone and FaceTime calls as CSV.' },
+  { id: 'notes', label: 'Notes', description: 'Every note on the iPhone as a text file.' },
+  { id: 'voicememos', label: 'Voice Memos', description: 'Recordings as .m4a audio files.' },
+  { id: 'whatsapp', label: 'WhatsApp', description: 'Chats as CSV and transcripts, plus photos, videos and voice notes.' },
+];
+
+const IMAGE_EXT = /\.(jpe?g|heic|heif|png|gif|dng|tiff?|webp|bmp)$/i;
+const VIDEO_EXT = /\.(mov|mp4|m4v|3gp|avi|hevc)$/i;
+
+/** Sorts a camera-roll file into photos, videos or neither (e.g. .AAE edit sidecars). */
+export function mediaKind(name: string): 'image' | 'video' | null {
+  if (IMAGE_EXT.test(name)) return 'image';
+  if (VIDEO_EXT.test(name)) return 'video';
+  return null;
+}
 
 /** Parses `ideviceinfo` (`Key: value` per line; nested dictionaries are indented and ignored). */
 export function parseKeyValues(out: string): Record<string, string> {

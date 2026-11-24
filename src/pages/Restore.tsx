@@ -8,7 +8,8 @@ import { formatBytes } from '../../shared/export';
 
 export function Restore({ state, selected, select }: PageProps) {
   const device = pickDevice(state, selected);
-  const backups = state.backups.filter((b) => !device || b.platform === device.platform);
+  // "Chosen items" iPhone backups are plain files, not device backups, so they can't be restored.
+  const backups = state.backups.filter((b) => b.kind !== 'items' && (!device || b.platform === device.platform));
   const [backupId, setBackupId] = useState<string | null>(null);
   const backup = backups.find((b) => b.id === backupId) ?? backups.find((b) => b.deviceId === device?.id || b.deviceId === device?.serial) ?? backups[0];
   const [cats, setCats] = useState<string[]>([]);

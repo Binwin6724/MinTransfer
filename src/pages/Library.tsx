@@ -67,6 +67,7 @@ export function LibraryPage({ state }: PageProps) {
                       </span>
                     )}
                     {b.source === 'system' && <span className="pill">Finder / iTunes</span>}
+                    {b.kind === 'items' && <span className="pill">Chosen items</span>}
                     {!b.complete && <span className="pill failed">Incomplete</span>}
                   </div>
                   <div className="muted">
@@ -94,7 +95,7 @@ export function LibraryPage({ state }: PageProps) {
                   )}
                 </div>
               </div>
-              {b.categories.length > 0 && b.platform === 'android' && (
+              {b.categories.length > 0 && (
                 <div className="cat-tags">
                   {b.categories.map((c) => (
                     <span key={c.id} className={`cat-tag ${c.files ? '' : 'empty'}`} title={c.warning}>

@@ -9,7 +9,7 @@ import type { JobContext } from './jobs';
 import { readPlistFile } from './plist';
 import { attributedBodyText, noteText } from '../shared/binary';
 import { appleLabel, csv, ContactCard, emptyCard, isoTime, phoneTypeFromLabel, safeName, toVCard } from '../shared/export';
-import { appleTime } from '../shared/ios';
+import { appleTime, mediaKind } from '../shared/ios';
 import type { RecoverGroup } from '../shared/types';
 
 let SQL: Promise<SqlJsStatic> | null = null;
@@ -219,6 +219,10 @@ export class IosBackupReader {
     switch (groupId) {
       case 'photos':
         return this.copyRefs(ctx, this.photoRefs(), path.join(dest, 'Photos'), (r) => r.relativePath.replace(/^Media\/DCIM\//, ''));
+      case 'images':
+        return this.copyRefs(ctx, this.photoRefs().filter((r) => mediaKind(r.relativePath) === 'image'), path.join(dest, 'Photos'), (r) => r.relativePath.replace(/^Media\/DCIM\//, ''));
+      case 'videos':
+        return this.copyRefs(ctx, this.photoRefs().filter((r) => mediaKind(r.relativePath) === 'video'), path.join(dest, 'Videos'), (r) => r.relativePath.replace(/^Media\/DCIM\//, ''));
       case 'deleted-photos':
         return this.copyRefs(ctx, this.deletedPhotoRefs(), path.join(dest, 'Recently Deleted Photos'), (r) => path.posix.basename(r.relativePath));
       case 'voicememos':

@@ -50,7 +50,7 @@ export function Icon({ name, size = 18, className, strokeWidth = 1.8 }: { name: 
 
 /** Icon for a backup category / recover group id. */
 export function groupIcon(id: string): string {
-  if (id.includes('photo')) return 'photo';
+  if (id.includes('photo') || id === 'images') return 'photo';
   if (id.includes('video')) return 'video';
   if (id.includes('music') || id.includes('voice')) return id.includes('voice') ? 'mic' : 'music';
   if (id.includes('contact')) return 'contacts';

@@ -42,7 +42,7 @@ Apps like iMazing, Dr.Fone or Smart Switch show how useful a "phone ⇄ computer
 | | |
 |---|---|
 | **Devices** | Live detection of every connected iPhone, iPad and Android phone (USB or Wi-Fi): name, model, OS version, battery, storage, serial/UDID, backup encryption. Clear guidance when a phone needs “Trust This Computer” or “Allow USB debugging”, and a one-click trust request for iPhones. |
-| **Backup** | **iPhone:** full Finder-compatible backup with progress, optional encryption (password confirmed, never saved). **Android:** pick Photos, Videos, Music & audio, Documents, Downloads, WhatsApp media, Apps (APK), Contacts (vCard), Call log, SMS, or the entire internal storage. Timestamps are preserved; free space is checked; each backup is a normal, portable folder. |
+| **Backup** | Choose what to save. **iPhone:** pick Photos, Videos, Contacts, Messages, Call history, Notes, Voice Memos or WhatsApp and get ordinary files (photos, `.vcf`, `.csv`, transcripts), optionally keeping a full backup too; or make a full Finder-compatible backup with optional encryption (password confirmed, never saved). **Android:** pick Photos, Videos, Music & audio, Documents, Downloads, WhatsApp media, Apps (APK), Contacts (vCard), Call log, SMS, or the entire internal storage. Timestamps are preserved; free space is checked; each backup is a normal, portable folder. |
 | **Restore** | **iPhone:** restore any MinTransfer, Finder or iTunes backup to the same or a new iPhone (settings, system files, restart, encrypted backups, and a “keep the backup untouched” copy mode). **Android:** push files back without overwriting newer ones, reinstall apps (with splits), import contacts, and rescan the media library. |
 | **Recover** | **From a backup:** photos, Recently Deleted photos, contacts (.vcf + .csv), Messages (SMS/iMessage CSV, per-chat transcripts and attachments, including iOS 16+ messages stored only in `attributedBody`), call history, notes with full text (Recently Deleted too), voice memos, WhatsApp messages and media, or every raw file. Android backups extract per category. **From an Android phone:** finds Android 11+ trash, Samsung / Xiaomi / OPPO / OnePlus gallery recycle bins, file-manager trash and thumbnail caches, grouped by source with select / recover. |
 | **Erase** | **iPhone:** step-by-step on-phone erase, or one click to restart it into recovery mode for a factory restore with Finder / Apple Devices (Apple doesn't let computers trigger "Erase All Content and Settings" over USB). **Android:** delete the contents of chosen shared-storage folders, uninstall all user apps, and restart into recovery for a full factory reset. Typed `ERASE` confirmation, backup check, Find My / FRP warnings. |
@@ -118,6 +118,7 @@ Get the installer for your computer from the **[latest release](https://github.c
 
 * **Helper tools are run without a shell.** Arguments are always passed as arrays; Android shell paths are single-quoted; package names are validated; erase only accepts known folder names.
 * **iPhone backups are standard.** A MinTransfer iPhone backup can be restored by Finder/iTunes, and Finder/iTunes backups can be browsed and restored by MinTransfer.
+* **iPhone “choose items” backups are plain files:** `Photos/`, `Videos/`, `Contacts.vcf`, `Messages/`, `Notes/`… Apple only allows whole-device backups, so MinTransfer reads the full backup into a temporary folder, saves the chosen items and deletes the rest. They can be browsed and copied but not restored onto an iPhone (keep a full backup for that).
 * **Android backups are plain folders:** `files/` mirrors `/sdcard`, `apps/<package>/*.apk`, `data/contacts.vcf`, `data/call-log.csv`, `data/messages.csv`, plus `mintransfer.json` describing the backup.
 * **Recovery reads, never writes.** Backups are opened read-only; extraction copies into a new folder.
 
@@ -131,7 +132,7 @@ Requirements: Node.js 22+. On macOS, `swift` (Xcode Command Line Tools) only if 
 git clone https://github.com/Binwin6724/MinTransfer.git
 cd MinTransfer
 npm install
-npm test            # 41 tests, including an end-to-end iOS backup extraction
+npm test            # 47 tests, including an end-to-end iOS backup extraction
 npm run dev         # Vite + Electron (uses libimobiledevice from Homebrew / PATH)
 
 # Bundle the iPhone tools into vendor/tools before packaging:

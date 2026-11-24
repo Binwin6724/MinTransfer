@@ -18,6 +18,12 @@ const args = process.argv.slice(1);
 const captureDir = argValue('--capture-screenshots');
 export const ERASE_PHRASE = 'ERASE';
 
+/** Sample phones shown only in --capture-screenshots mode when nothing is plugged in. */
+const DEMO_DEVICES: PhoneDevice[] = [
+  { id: '00008130-001A2B3C4D5E6F70', platform: 'ios', state: 'ready', name: 'Demo iPhone', manufacturer: 'Apple', model: 'iPhone 15 Pro', osName: 'iOS', osVersion: '18.1', wireless: false, battery: 82, charging: true, storageTotal: 256e9, storageFree: 141e9, backupEncryption: false, serial: 'F2LXDEMO0001' },
+  { id: 'R5CW30DEMO', platform: 'android', state: 'ready', name: 'Demo Galaxy', manufacturer: 'Samsung', model: 'Samsung Galaxy S24', osName: 'Android', osVersion: '15', wireless: false, battery: 64, storageTotal: 128e9, storageFree: 52e9, serial: 'R5CW30DEMO' },
+];
+
 function argValue(flag: string): string | null {
   const i = args.indexOf(flag);
   return i >= 0 && args[i + 1] ? args[i + 1] : null;
@@ -92,6 +98,7 @@ async function poll() {
   try {
     const [a, i] = await Promise.all([android.list(), ios.list()]);
     devices = [...i, ...a];
+    if (captureDir && !devices.length) devices = DEMO_DEVICES;
   } catch (err) {
     log.warn('poll failed', err);
   } finally {
@@ -213,7 +220,8 @@ function registerIpc() {
     const used = d.storageTotal && d.storageFree != null ? d.storageTotal - d.storageFree : null;
     const job = jobs.start('backup', `Back up ${d.name}`, d.id, async (ctx) => {
       if (free != null && used != null && free < used * 0.25) ctx.log(`⚠ Only ${formatBytes(free)} free on the backup drive; the phone uses ${formatBytes(used)}.`);
-      if (d.platform === 'ios') await ios.backup(ctx, d, dir, { encryptPassword: req.encryptPassword, label: req.label });
+      if (d.platform === 'ios' && req.iosItems) await ios.backupItems(ctx, d, dir, req.iosItems, { keepFull: req.keepFull, label: req.label });
+      else if (d.platform === 'ios') await ios.backup(ctx, d, dir, { encryptPassword: req.encryptPassword, label: req.label });
       else {
         if (!req.categories.length) throw new Error('Choose at least one thing to back up.');
         await android.backup(ctx, d, req.categories, dir, req.label);
@@ -227,6 +235,8 @@ function registerIpc() {
   handle('restore:start', (req: RestoreRequest) => {
     const d = device(req.deviceId);
     const rec = library.get(req.backupId);
+    if (rec.kind === 'items')
+      throw new Error('This backup holds only the items you chose, saved as ordinary files, so it can’t be restored onto a phone. Open it in Recover or the Backups folder instead.');
     if (rec.platform !== d.platform) throw new Error(`This is ${rec.platform === 'ios' ? 'an iPhone' : 'an Android'} backup and can't be restored to ${d.platform === 'ios' ? 'an iPhone' : 'an Android phone'}. Use Recover to extract its files instead.`);
     const job = jobs.start('restore', `Restore ${rec.deviceName} → ${d.name}`, d.id, async (ctx) => {
       if (d.platform === 'ios') await ios.restore(ctx, d.id, rec, req.ios ?? { system: false, settings: true, reboot: true, copy: true });

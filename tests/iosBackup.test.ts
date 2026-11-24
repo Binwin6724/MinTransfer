@@ -130,6 +130,16 @@ describe('iOS backup reader', () => {
     expect(groups.whatsapp.available).toBe(false);
   });
 
+  it('splits the camera roll into photos and videos for item backups', async () => {
+    const r = await IosBackupReader.open(backup);
+    const out = path.join(root, 'items');
+    await r.extract(ctx, 'images', out);
+    await r.extract(ctx, 'videos', out);
+    r.close();
+    expect(fs.readdirSync(path.join(out, 'Photos', '100APPLE')).sort()).toEqual(['IMG_0001.JPG', 'IMG_0002.JPG']);
+    expect(fs.readdirSync(path.join(out, 'Videos'))).toEqual([]);
+  });
+
   it('extracts photos, deleted photos, contacts, messages, calls and notes', async () => {
     const out = path.join(root, 'out');
     const r = await IosBackupReader.open(backup);

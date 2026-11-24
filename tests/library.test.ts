@@ -47,6 +47,33 @@ describe('backup library', () => {
     expect(fs.existsSync(path.join(out, 'contacts.vcf'))).toBe(true);
   });
 
+  it('browses and extracts iPhone "chosen items" backups', async () => {
+    const dir = path.join(root, 'lib', 'iPhone 2026-02-01 000000');
+    fs.mkdirSync(path.join(dir, 'Photos', '100APPLE'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'Photos', '100APPLE', 'IMG_1.HEIC'), 'P');
+    fs.writeFileSync(path.join(dir, 'Contacts.vcf'), 'V');
+    fs.writeFileSync(path.join(dir, 'Contacts.csv'), 'C');
+    const rec: BackupRecord = {
+      id: 'x', platform: 'ios', source: 'mintransfer', deviceId: 'UDID1', deviceName: 'iPhone', deviceModel: 'iPhone 15', osVersion: '18.0',
+      createdAt: 2, path: dir, dataPath: dir, sizeBytes: 3, encrypted: false, complete: true, kind: 'items',
+      categories: [
+        { id: 'images', label: 'Photos', files: 1, bytes: 1, paths: ['Photos'] },
+        { id: 'contacts', label: 'Contacts', files: 2, bytes: 2, paths: ['Contacts.vcf', 'Contacts.csv'] },
+        { id: 'notes', label: 'Notes', files: 0, bytes: 0, paths: [], warning: 'Nothing found on this iPhone' },
+      ],
+    };
+    fs.writeFileSync(path.join(dir, META_FILE), JSON.stringify(rec));
+    const lib = new Library(() => path.join(root, 'lib'), () => false);
+    const found = lib.scan().find((b) => b.deviceId === 'UDID1')!;
+    expect(found.dataPath).toBe(dir);
+    const groups = await lib.groups(found.id);
+    expect(groups.map((g) => [g.id, g.available])).toEqual([['images', true], ['contacts', true], ['notes', false]]);
+    const out = await lib.extract(ctx, found.id, ['images', 'contacts'], path.join(root, 'out-ios'));
+    expect(fs.readFileSync(path.join(out, 'Photos', '100APPLE', 'IMG_1.HEIC'), 'utf8')).toBe('P');
+    expect(fs.existsSync(path.join(out, 'Contacts.vcf'))).toBe(true);
+    fs.rmSync(dir, { recursive: true });
+  });
+
   it('only deletes folders that are MinTransfer backups', () => {
     const lib = new Library(() => path.join(root, 'lib'), () => false);
     const [rec] = lib.scan();

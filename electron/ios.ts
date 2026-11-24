@@ -3,15 +3,16 @@
 // a MinTransfer backup is a standard iOS backup that Finder, iTunes and Apple Devices can also read.
 import fs from 'node:fs';
 import path from 'node:path';
-import { run, RunResult, toolEnv } from './exec';
+import { CancelledError, run, RunResult, toolEnv } from './exec';
 import { dirStats, writeJson } from './fsutil';
 import type { JobContext } from './jobs';
 import { log } from './logger';
 import { readPlistFile } from './plist';
 import type { IosTool, ToolPaths } from './tools';
 import { META_FILE } from './android';
-import { appleModelName, classifyLockdownError, explainBackupError, parseBackupProgress, parseKeyValues, parseUdidList } from '../shared/ios';
-import type { BackupRecord, PhoneDevice } from '../shared/types';
+import { IosBackupReader } from './iosBackup';
+import { appleModelName, IOS_ITEMS, classifyLockdownError, explainBackupError, parseBackupProgress, parseKeyValues, parseUdidList } from '../shared/ios';
+import type { BackupRecord, IosItemId, PhoneDevice } from '../shared/types';
 
 export class IosService {
   private info = new Map<string, { at: number; device: PhoneDevice }>();
@@ -196,6 +197,120 @@ export class IosService {
     writeJson(path.join(dir, META_FILE), record);
     if (!ok) throw new Error(explainBackupError(r.all));
     ctx.progress(1, `Backup finished: ${stats.files.toLocaleString()} files`);
+    return record;
+  }
+
+  /**
+   * "Choose items" backup. iOS has no partial backup, so MinTransfer makes a full backup into a
+   * hidden staging folder, exports only the chosen items as ordinary files, then deletes the
+   * staging copy (or keeps it as a restorable full backup when keepFull is set).
+   */
+  async backupItems(
+    ctx: JobContext,
+    device: PhoneDevice,
+    dir: string,
+    items: IosItemId[],
+    opts: { keepFull?: boolean; label?: string },
+  ): Promise<BackupRecord> {
+    if (!items.length) throw new Error('Choose at least one thing to back up.');
+    if (device.backupEncryption)
+      throw new Error('Backup encryption is on for this iPhone, so its contents can’t be read. Make a full backup instead, or turn off encryption first.');
+    const udid = device.id;
+    const staging = path.join(dir, '.staging');
+    fs.mkdirSync(staging, { recursive: true });
+    const record: BackupRecord = {
+      id: path.basename(dir),
+      platform: 'ios',
+      source: 'mintransfer',
+      deviceId: udid,
+      deviceName: device.name,
+      deviceModel: device.model,
+      osVersion: device.osVersion,
+      createdAt: Date.now(),
+      path: dir,
+      dataPath: dir,
+      sizeBytes: 0,
+      categories: [],
+      encrypted: false,
+      complete: false,
+      note: opts.label,
+      kind: 'items',
+    };
+    const save = () => writeJson(path.join(dir, META_FILE), record);
+    save();
+    const phase = (from: number, to: number): JobContext => ({
+      ...ctx,
+      progress: (f, d) => ctx.progress(f == null ? null : from + f * (to - from), d),
+    });
+
+    try {
+      // 1. Read everything off the phone (Apple only offers whole-device backups).
+      ctx.progress(null, 'Unlock the iPhone if it asks for its passcode. Reading the iPhone…');
+      const net = device.wireless ? ['-n'] : [];
+      const r = await this.backup2(phase(0, 0.85), ['-u', udid, ...net, 'backup', '--full', staging]);
+      const ok = r.code === 0 && /Backup Successful|Finished/i.test(r.all) && !/Backup Failed/i.test(r.all);
+      if (!ok) throw new Error(explainBackupError(r.all));
+      const dataPath = path.join(staging, udid);
+      if (IosBackupReader.isEncrypted(dataPath))
+        throw new Error('The iPhone encrypted this backup, so its contents can’t be read. Make a full backup instead, or turn off encryption first.');
+
+      // 2. Export just the chosen items.
+      const reader = await IosBackupReader.open(dataPath);
+      try {
+        for (let i = 0; i < items.length; i++) {
+          ctx.check();
+          const info = IOS_ITEMS.find((x) => x.id === items[i]);
+          const label = info?.label ?? items[i];
+          ctx.progress(0.85 + (0.13 * i) / items.length, `Saving ${label}…`);
+          const before = new Set(fs.readdirSync(dir));
+          let warning: string | undefined;
+          try {
+            await reader.extract(phase(0.85 + (0.13 * i) / items.length, 0.85 + (0.13 * (i + 1)) / items.length), items[i], dir);
+          } catch (err) {
+            if (err instanceof CancelledError) throw err;
+            // One missing item (e.g. contacts kept only in iCloud) shouldn't fail the others.
+            warning = 'Not on this iPhone (it may be kept only in iCloud)';
+            log.warn('item export failed', { item: items[i], err: String(err) });
+          }
+          const paths: string[] = [];
+          let files = 0;
+          let bytes = 0;
+          for (const p of fs.readdirSync(dir).filter((f) => !before.has(f))) {
+            const s = dirStats(path.join(dir, p));
+            if (!s.files) {
+              fs.rmSync(path.join(dir, p), { recursive: true, force: true });
+              continue;
+            }
+            paths.push(p);
+            files += s.files;
+            bytes += s.bytes;
+          }
+          if (!files) warning ??= 'Nothing found on this iPhone';
+          record.categories.push({ id: items[i], label, files, bytes, paths, warning });
+          if (warning) ctx.log(`${label}: ${warning}`);
+          else
+          ctx.log(`${label}: ${files.toLocaleString()} files`);
+        }
+      } finally {
+        reader.close();
+      }
+
+      // 3. Keep or drop the full copy.
+      if (opts.keepFull) {
+        fs.renameSync(dataPath, path.join(dir, udid));
+        const s = dirStats(path.join(dir, udid));
+        record.kind = 'full';
+        record.dataPath = path.join(dir, udid);
+        record.categories.push({ id: 'full', label: 'Full device backup', files: s.files, bytes: s.bytes, paths: [udid] });
+      }
+      record.complete = true;
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+      record.sizeBytes = record.categories.reduce((n, c) => n + c.bytes, 0);
+      save();
+    }
+    const total = record.categories.filter((c) => c.id !== 'full').reduce((n, c) => n + c.files, 0);
+    ctx.progress(1, `Backup finished: ${total.toLocaleString()} files saved`);
     return record;
   }
 
